@@ -319,8 +319,11 @@ class ArmControl:
                                  rtt_ms=round((time.monotonic() - t) * 1000), health=health)
                 self.last_reply = now
                 if was != 'ok':
+                    restarted = old.get('up_s') is not None and (health.get('up_s') or 0) < old['up_s']
                     self._log('info', f'the arm is answering again (firmware {reply.get("version")}, '
-                                      f'up {health.get("up_s")} s)')
+                                      f'up {health.get("up_s")} s: '
+                                      + ('it restarted)' if restarted else 'it kept running, so only its '
+                                         'replies were lost)'))
                     self._stop_locked('link came back', quiet=True)   # make sure it is stopped
                 if old.get('up_s') is not None and (health.get('up_s') or 0) < old['up_s']:
                     self._log('warn', f'the arm restarted (uptime went from {old["up_s"]} s to {health.get("up_s")} s)')
@@ -370,9 +373,11 @@ class ArmControl:
     def _link_problem(self):
         state = self.link['state']
         if state == 'silent':
-            return ("the arm's radio acknowledges packets but its firmware has not replied to "
-                    f"{self.link['misses']} pings in a row ({self._ago()}). Its firmware has stopped "
-                    "running: switch the arm off and on.")
+            return ("the arm acknowledges the radio (so it is powered and hears the Mac), but none of its "
+                    f"replies arrived for {self.link['misses']} pings in a row ({self._ago()}). Either its "
+                    "replies are lost on the way back (weak signal: low battery, distance, or the bridge's "
+                    "position), or its firmware has frozen. Moving is blocked until it replies again; if "
+                    "this lasts, move the bridge closer or charge the battery, then switch the arm off and on.")
         if state == 'lost':
             return (f"no radio acknowledgement from the arm for {self.link['misses']} pings in a row "
                     f"({self._ago()}). It is switched off, out of battery, or out of range.")

@@ -254,7 +254,7 @@ function show(s){
   // one missed ping reply every so often is normal radio life; only flag a run of them
   const weak=(L.misses||0)>=2;
   dot('arm-dot',linkOk?(weak?'warn':'ok'):'bad');
-  $('arm-txt').textContent=linkOk?`${L.name||'arm'} ${L.version||''}${weak?' (weak signal)':''}`:({silent:'not replying',lost:'not answering',connecting:'searching…'}[L.state]||L.state);
+  $('arm-txt').textContent=linkOk?`${L.name||'arm'} ${L.version||''}${weak?' (weak signal)':''}`:({silent:'replies lost',lost:'no radio contact',connecting:'searching…'}[L.state]||L.state);
   showArmed();
   const moving=Object.entries(s.running||{}).filter(([,v])=>v).map(([j,v])=>`${LABEL[j]||j} ${v>0?'+':''}${v}%`);
   if(s.stopping){

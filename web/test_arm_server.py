@@ -193,7 +193,8 @@ class LinkTest(unittest.TestCase):
         r.run(arm_server.PING_S * arm_server.LOST_AFTER + 0.1)
         s = r.control.status()
         self.assertEqual(s['link']['state'], 'silent')
-        self.assertIn('switch the arm off and on', s['problem'])
+        self.assertIn('acknowledges the radio', s['problem'])
+        self.assertIn('replies are lost on the way back', s['problem'])
 
     def test_arming_refused_with_the_reason_until_connected(self):
         r = Rig(connect_ok=False)
