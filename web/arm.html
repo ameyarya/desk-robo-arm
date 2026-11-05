@@ -1,143 +1,261 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Robo Arm</title>
 <style>
 :root{color-scheme:dark;--bg:#0b0f15;--panel:#121822e6;--panel2:#1b2330;--line:#263142;--line2:#35445b;--fg:#eef3fa;--dim:#9aabc2;--dim2:#7d8ea8;
-  --ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--accent:#60a5fa;--arm:#f59e0b;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg)}
+  --ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--accent:#60a5fa;--arm:#f59e0b;--shell:#e9e3d3;--shell2:#d6cfbd;--shell-ink:#3b3528;
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg)}
 *{box-sizing:border-box}
+html,body{overscroll-behavior:none}
 body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,#16233a 0%,var(--bg) 60%) var(--bg);min-height:100vh}
-.wrap{max-width:1100px;margin:0 auto;padding:12px 16px 24px}
+.wrap{max-width:1040px;margin:0 auto;padding:12px 16px 24px}
 [hidden]{display:none!important}
-button{font:inherit;color:inherit;background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:10px 14px;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;transition:background .12s,border-color .12s,transform .05s}
-button:hover{background:#243045}button:active{transform:scale(.98)}button:disabled{opacity:.45;cursor:not-allowed}
-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+button{font:inherit;color:inherit;background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:10px 14px;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none}
+button:active{transform:scale(.98)}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}
 .brand{display:flex;align-items:baseline;gap:10px}.brand h1{font-size:20px;margin:0;font-weight:650}.brand .sub{font-size:12px;color:var(--dim2)}
 .pills{display:flex;gap:8px;flex-wrap:wrap}
 .pill{display:flex;align-items:center;gap:8px;padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:#121822cc;font-size:12px;color:var(--dim)}
 .pill b{color:var(--fg);font-weight:600}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--dim2);flex:none}
-.dot.ok{background:var(--ok);box-shadow:0 0 8px #4ade8088}.dot.bad{background:var(--bad)}
-main{display:grid;grid-template-columns:300px minmax(0,1fr);gap:14px}
-@media(max-width:820px){main{grid-template-columns:1fr}}
+.dot.ok{background:var(--ok);box-shadow:0 0 8px #4ade8088}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}
+#banner{margin-bottom:12px;padding:10px 14px;border-radius:12px;font-size:13px;line-height:1.5;border:1px solid #7f1d1d;background:#2a1215}
+#banner.info{border-color:#35445b;background:#141c28;color:var(--dim)}
+
+/* the remote: a digital copy of the CyberBrick standard remote */
+.remote{position:relative;margin:0 auto;max-width:860px;background:linear-gradient(180deg,var(--shell),var(--shell2));color:var(--shell-ink);
+  border-radius:120px 120px 70px 70px/90px 90px 60px 60px;padding:26px 34px 30px;box-shadow:0 18px 50px #0008,inset 0 2px 0 #fff8,inset 0 -6px 0 #0001;
+  display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:18px;touch-action:none;user-select:none;-webkit-user-select:none}
+.remote.armed{box-shadow:0 0 0 4px #f59e0b88,0 18px 50px #0008,inset 0 2px 0 #fff8}
+.side{display:flex;flex-direction:column;align-items:center;gap:10px}
+.stick-label{font-size:12px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;opacity:.7}
+.axes{font-size:12px;line-height:1.5;text-align:center;opacity:.85;min-height:36px}
+.axes b{font-weight:700}
+.well{--r:110px;position:relative;width:calc(var(--r)*2);height:calc(var(--r)*2);border-radius:50%;
+  background:radial-gradient(circle at 50% 45%,#2b2f36 0%,#1a1d22 70%,#111317 100%);box-shadow:inset 0 6px 14px #000c,0 2px 0 #fff6;touch-action:none;cursor:grab}
+.well::before,.well::after{content:"";position:absolute;background:#ffffff14}
+.well::before{left:50%;top:12%;bottom:12%;width:2px;transform:translateX(-50%)}
+.well::after{top:50%;left:12%;right:12%;height:2px;transform:translateY(-50%)}
+.well .dead{position:absolute;inset:calc(50% - var(--r)*.15);border-radius:50%;border:1px dashed #ffffff22}
+.knob{position:absolute;left:50%;top:50%;width:46%;height:46%;margin:-23% 0 0 -23%;border-radius:50%;
+  background:radial-gradient(circle at 40% 35%,#4a4f59,#23262c 70%);box-shadow:0 6px 12px #000a,inset 0 2px 2px #fff3;transition:transform .12s ease-out;pointer-events:none}
+.well.active .knob{transition:none;background:radial-gradient(circle at 40% 35%,#6fb1ff,#1f5fb0 70%)}
+.well.disabled{opacity:.5;cursor:not-allowed}
+.centre{display:flex;flex-direction:column;align-items:center;gap:12px;min-width:150px}
+.logo{font-size:13px;font-weight:800;letter-spacing:2px;opacity:.55}
+#arm{width:140px;padding:12px;font-weight:700;border-radius:999px;background:#3b3528;color:#f3eee2;border:0}
+#arm.armed{background:var(--arm);color:#1b1206}
+#stop{width:96px;height:96px;border-radius:50%;font-size:20px;font-weight:900;letter-spacing:1px;background:#c81e1e;color:#fff;border:4px solid #7f1212;box-shadow:0 6px 0 #7f1212,0 10px 18px #0006}
+#stop:active{transform:translateY(4px);box-shadow:0 2px 0 #7f1212}
+.led{width:12px;height:12px;border-radius:50%;background:#6b6455;box-shadow:inset 0 1px 2px #0006}
+.led.ok{background:#22c55e;box-shadow:0 0 10px #22c55e}.led.armed{background:var(--arm);box-shadow:0 0 10px var(--arm)}.led.bad{background:#ef4444;box-shadow:0 0 10px #ef4444}
+@media(max-width:760px){.remote{grid-template-columns:1fr 1fr;border-radius:60px;padding:22px 16px}
+  .centre{grid-column:1/-1;grid-row:1;flex-direction:row;justify-content:center;min-width:0}
+  .well{--r:min(36vw,120px)}#stop{width:76px;height:76px;font-size:16px}#arm{width:120px}}
+
+.below{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin-top:16px}
+@media(max-width:760px){.below{grid-template-columns:1fr}}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px}
 .card h2{font-size:12px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--dim2);margin:0 0 10px}
-#arm{width:100%;padding:14px;font-size:16px;font-weight:650;border-radius:14px}
-#arm.armed{background:var(--arm);border-color:#fbbf24;color:#1b1206}
-#stop{width:100%;margin-top:8px;padding:16px;font-size:20px;font-weight:800;letter-spacing:1px;border-radius:14px;background:#b91c1c;border-color:#ef4444}
-#stop:hover{background:#dc2626}
-.status{font-size:12px;color:var(--dim);line-height:1.5;min-height:18px;margin:10px 0 0}.status.warn{color:var(--warn)}
-.hint{font-size:12px;line-height:1.7;color:var(--dim);margin:10px 0 0}
+.jrow{display:grid;grid-template-columns:72px 1fr 44px auto;align-items:center;gap:10px;font-size:13px;margin:8px 0}
+.jrow input[type=range]{width:100%;accent-color:var(--accent)}
+.jrow output{text-align:right;font-variant-numeric:tabular-nums}
+.jrow label{display:flex;align-items:center;gap:5px;color:var(--dim);font-size:12px;cursor:pointer}
+.meter{height:6px;border-radius:3px;background:#0b1018;position:relative;overflow:hidden;margin-top:3px}
+.meter i{position:absolute;top:0;bottom:0;left:50%;background:var(--accent);width:0}
+.opt{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--dim);margin-top:10px;cursor:pointer}
+.status{font-size:12px;color:var(--dim);line-height:1.6;margin:0}
+.status.warn{color:var(--warn)}
 kbd{font:11px ui-monospace,monospace;padding:1px 5px;border:1px solid var(--line2);border-bottom-width:2px;border-radius:5px;color:var(--fg)}
-.joints{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;align-content:start}
-.joints.off .joint{opacity:.55}
-.joint{transition:border-color .15s,opacity .15s}.joint.moving{border-color:var(--accent);box-shadow:0 0 0 3px #60a5fa22}
-.jhead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
-.jhead h3{margin:0;font-size:17px;font-weight:650}.jhead span{font-size:12px;color:var(--dim2);font-variant-numeric:tabular-nums}
-.btns{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.btns button{padding:22px 0;font-size:26px;border-radius:16px}
-.btns button.on{background:var(--accent);border-color:#93c5fd;color:#06101f}
-.btns small{display:block;font-size:11px;margin-top:4px;color:inherit;opacity:.8}
-.row{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:12px;color:var(--dim)}
-.row input[type=range]{flex:1;accent-color:var(--accent)}
-.row output{width:38px;text-align:right;color:var(--fg);font-variant-numeric:tabular-nums}
-label.flip{display:flex;align-items:center;gap:6px;cursor:pointer}
+.hint{font-size:12px;line-height:1.8;color:var(--dim);margin:8px 0 0}
 </style></head><body><div class="wrap">
 <header>
-  <div class="brand"><h1>Robo Arm</h1><span class="sub">L-ONE · desk arm</span></div>
+  <div class="brand"><h1>Robo Arm</h1><span class="sub">L-ONE · digital remote</span></div>
   <div class="pills">
+    <span class="pill"><span class="dot" id="srv-dot"></span>Server <b id="srv-txt">…</b></span>
     <span class="pill"><span class="dot" id="bridge-dot"></span>Bridge <b id="bridge-txt">…</b></span>
     <span class="pill"><span class="dot" id="arm-dot"></span>Arm <b id="arm-txt">…</b></span>
   </div>
 </header>
-<main>
+<div id="banner" hidden></div>
+
+<div class="remote" id="remote">
+  <div class="side">
+    <div class="stick-label">L stick</div>
+    <div class="well" id="stick-L"><div class="dead"></div><div class="knob"></div></div>
+    <div class="axes" id="axes-L"></div>
+  </div>
+  <div class="centre">
+    <div class="logo">CYBERBRICK</div>
+    <span class="led" id="led" title="Off: disarmed · green: connected · amber: armed · red: problem"></span>
+    <button id="arm">ARM</button>
+    <button id="stop" title="Esc or Space">STOP</button>
+  </div>
+  <div class="side">
+    <div class="stick-label">R stick</div>
+    <div class="well" id="stick-R"><div class="dead"></div><div class="knob"></div></div>
+    <div class="axes" id="axes-R"></div>
+  </div>
+</div>
+
+<div class="below">
   <section class="card">
-    <h2>Control</h2>
-    <button id="arm">Arm to move</button>
-    <button id="stop">STOP</button>
-    <p class="status" id="status">Connecting…</p>
-    <p class="hint">Hold a button (or key) to move a joint; let go to stop.<br>
-      Base <kbd>A</kbd><kbd>D</kbd> · Shoulder <kbd>W</kbd><kbd>S</kbd> · Elbow <kbd>↑</kbd><kbd>↓</kbd><br>
-      <kbd>Esc</kbd> / <kbd>Space</kbd> = STOP. Closing the page disarms.</p>
+    <h2>Joints</h2>
+    <div id="joint-rows"></div>
+    <label class="opt"><input type="checkbox" id="one-axis">One direction per stick (ignore the smaller of up/down vs left/right)</label>
   </section>
-  <section class="joints off" id="joints"></section>
-</main>
+  <section class="card">
+    <h2>Status</h2>
+    <p class="status" id="status">Connecting…</p>
+    <p class="hint">ARM, then push a stick: the further you push, the faster the joint moves. Let go and it stops.<br>
+      Keys: base <kbd>A</kbd><kbd>D</kbd> · shoulder <kbd>W</kbd><kbd>S</kbd> · elbow <kbd>↑</kbd><kbd>↓</kbd> · STOP <kbd>Esc</kbd>/<kbd>Space</kbd><br>
+      Closing the page or losing the connection stops the arm.</p>
+  </section>
+</div>
 </div>
 <script>
 const $=id=>document.getElementById(id);
-async function getJSON(u){const r=await fetch(u,{cache:'no-store'});return r.json()}
-async function postJSON(u,b){const r=await fetch(u,{method:'POST',body:JSON.stringify(b||{})});let j={};try{j=await r.json()}catch(e){}if(!r.ok)throw new Error(j.error||r.status);return j}
-
-// Joint buttons: + speed is the second button. "Flip" swaps them if a joint moves the other way.
-const JOINTS={base:{label:'Base',neg:['◀','left'],pos:['▶','right'],keys:{a:-1,d:1},speed:40},
-  shoulder:{label:'Shoulder',neg:['▼','down'],pos:['▲','up'],keys:{s:-1,w:1},speed:30},
-  elbow:{label:'Elbow',neg:['▼','down'],pos:['▲','up'],keys:{arrowdown:-1,arrowup:1},speed:30}};
 const store={get(k,d){try{const v=localStorage.getItem('arm.'+k);return v===null?d:JSON.parse(v)}catch(e){return d}},
   set(k,v){try{localStorage.setItem('arm.'+k,JSON.stringify(v))}catch(e){}}};
-const keyJoint={};for(const [j,c] of Object.entries(JOINTS))for(const [k,d] of Object.entries(c.keys))keyJoint[k]=[j,d];
 
-let armed=false,mine=false,maxSpeed=80;
-const held={};          // joint -> direction (-1/1) currently held
-const timers={};
+// Which stick axis drives which joint, as on the CyberBrick remote's L-ONE layout. + is
+// right / up. "gripper" is listed so the R stick's x axis says what it's for once fitted.
+const MAP={L:{x:'base',y:'shoulder'},R:{x:'gripper',y:'elbow'}};
+const LABEL={base:'Base',shoulder:'Shoulder',elbow:'Elbow',gripper:'Gripper'};
+const DIRS={base:['left','right'],shoulder:['down','up'],elbow:['down','up'],gripper:['open','close']};
+const DEFAULT_SPEED={base:40,shoulder:35,elbow:35};
+const KEYS={a:['base',-1],d:['base',1],s:['shoulder',-1],w:['shoulder',1],arrowdown:['elbow',-1],arrowup:['elbow',1]};
+const DEAD=0.15,SEND_MS=120;
 
-function buildJoints(names){
-  $('joints').innerHTML='';
-  for(const j of names){const c=JOINTS[j]||{label:j,neg:['−','−'],pos:['+','+'],speed:30};
-    const speed=store.get(j+'.speed',c.speed),flip=store.get(j+'.flip',false);
-    const el=document.createElement('div');el.className='card joint';el.id='j-'+j;
-    el.innerHTML=`<div class="jhead"><h3>${c.label}</h3><span id="r-${j}">stopped</span></div>
-      <div class="btns"><button data-j="${j}" data-d="-1">${c.neg[0]}<small>${c.neg[1]}</small></button>
-      <button data-j="${j}" data-d="1">${c.pos[0]}<small>${c.pos[1]}</small></button></div>
-      <div class="row">Speed <input type="range" min="10" max="${maxSpeed}" step="5" value="${speed}" id="s-${j}"><output id="o-${j}">${speed}%</output></div>
-      <div class="row"><label class="flip"><input type="checkbox" id="f-${j}" ${flip?'checked':''}>Flip direction</label></div>`;
-    $('joints').appendChild(el);
+let joints=[],maxSpeed=80,armed=false,mine=false,linkOk=false;
+const stick={L:{x:0,y:0,id:null},R:{x:0,y:0,id:null}};
+const keys={};            // joint -> -1/1 while a key is held
+const sentNonZero={};     // joints we've asked to move (so we release them)
+
+// -- server calls: tell "server unreachable" apart from "server said no" --------------
+let netFails=0;
+async function call(method,url,body){
+  let r;
+  try{r=await fetch(url,{method,cache:'no-store',body:body===undefined?undefined:JSON.stringify(body)})}
+  catch(e){netFails++;throw Object.assign(new Error('network'),{network:true})}
+  netFails=0;let j={};try{j=await r.json()}catch(e){}
+  if(r.status===401){location.reload();throw new Error('log in')}
+  if(!r.ok)throw Object.assign(new Error(j.error||('HTTP '+r.status)),{status:j.status});
+  return j}
+
+// -- joint settings ------------------------------------------------------------------
+function buildRows(){
+  $('joint-rows').innerHTML='';
+  for(const j of joints){
+    const sp=Math.min(store.get(j+'.speed',DEFAULT_SPEED[j]||30),maxSpeed),flip=store.get(j+'.flip',false);
+    const row=document.createElement('div');
+    row.innerHTML=`<div class="jrow"><span>${LABEL[j]||j}</span><input type="range" id="s-${j}" min="10" max="${maxSpeed}" step="5" value="${sp}">
+      <output id="o-${j}">${sp}%</output><label><input type="checkbox" id="f-${j}" ${flip?'checked':''}>Flip</label></div>
+      <div class="meter"><i id="m-${j}"></i></div>`;
+    $('joint-rows').appendChild(row);
     $('s-'+j).oninput=e=>{$('o-'+j).textContent=e.target.value+'%';store.set(j+'.speed',+e.target.value)};
-    $('f-'+j).onchange=e=>store.set(j+'.flip',e.target.checked);
-    for(const b of el.querySelectorAll('button[data-d]')){
-      b.onpointerdown=e=>{try{b.setPointerCapture(e.pointerId)}catch(err){}press(j,+b.dataset.d)};
-      b.onpointerup=b.onpointercancel=b.onlostpointercapture=()=>release(j)}}}
+    $('f-'+j).onchange=e=>store.set(j+'.flip',e.target.checked)}
+  $('one-axis').checked=store.get('oneAxis',true);
+  $('one-axis').onchange=e=>store.set('oneAxis',e.target.checked);
+  for(const s of ['L','R']){const m=MAP[s];
+    $('axes-'+s).innerHTML=[['↔',m.x],['↕',m.y]].map(([a,j])=>joints.includes(j)?`${a} <b>${LABEL[j]}</b>`:`${a} ${LABEL[j]} <i>(not fitted)</i>`).join('<br>')}}
 
-function speedFor(j,d){return d*(+$('s-'+j).value)*($('f-'+j).checked?-1:1)}
-function press(j,d){
-  if(!armed){setStatus('Arm first to move.',true);return}
-  if(held[j]===d)return;held[j]=d;showHeld(j);clearInterval(timers[j]);
-  const send=()=>postJSON('/hold',{joint:j,speed:speedFor(j,d)}).catch(e=>{setStatus(e.message,true);release(j)});
-  send();timers[j]=setInterval(send,150)}
-function release(j){
-  if(held[j]===undefined)return;delete held[j];clearInterval(timers[j]);showHeld(j);
-  postJSON('/release',{joint:j}).catch(()=>{})}
-function releaseAll(){for(const j of Object.keys(held))release(j)}
-function showHeld(j){const el=$('j-'+j);if(!el)return;
-  for(const b of el.querySelectorAll('button[data-d]'))b.classList.toggle('on',held[j]===+b.dataset.d)}
-function setStatus(t,warn){$('status').textContent=t;$('status').className='status'+(warn?' warn':'')}
+// -- sticks --------------------------------------------------------------------------
+function setupStick(side){
+  const el=$('stick-'+side),knob=el.querySelector('.knob'),st=stick[side];
+  const move=e=>{const r=el.getBoundingClientRect(),R=r.width/2;
+    let dx=(e.clientX-r.left-R)/R,dy=-(e.clientY-r.top-R)/R;const d=Math.hypot(dx,dy);if(d>1){dx/=d;dy/=d}
+    st.x=dx;st.y=dy;knob.style.transform=`translate(${dx*R*0.62}px,${-dy*R*0.62}px)`;
+    if(!pumpTimer)pump()};   // while a joint moves, the SEND_MS timer sends the latest position
+  const end=e=>{if(st.id!==e.pointerId)return;st.id=null;st.x=st.y=0;knob.style.transform='';el.classList.remove('active');pump()};
+  el.addEventListener('pointerdown',e=>{
+    if(!armed){note('ARM first, then use the sticks.',true);return}
+    st.id=e.pointerId;try{el.setPointerCapture(e.pointerId)}catch(err){}el.classList.add('active');move(e)});
+  el.addEventListener('pointermove',e=>{if(st.id===e.pointerId)move(e)});
+  el.addEventListener('pointerup',end);el.addEventListener('pointercancel',end);el.addEventListener('lostpointercapture',end)}
+function releaseSticks(){for(const s of ['L','R']){const st=stick[s];st.id=null;st.x=st.y=0;
+  const el=$('stick-'+s);el.classList.remove('active');el.querySelector('.knob').style.transform=''}}
 
+function shaped(v){const a=Math.abs(v);if(a<DEAD)return 0;return Math.sign(v)*((a-DEAD)/(1-DEAD))}
+// joint -> -1..1 demand from sticks and keys
+function demand(){
+  const out={};
+  for(const s of ['L','R']){let {x,y}=stick[s];
+    if($('one-axis').checked){if(Math.abs(x)>Math.abs(y))y=0;else x=0}
+    out[MAP[s].x]=shaped(x);out[MAP[s].y]=shaped(y)}
+  for(const [j,d] of Object.entries(keys))out[j]=d;
+  return out}
+function speedOf(j,v){if(!$('s-'+j))return 0;return Math.round(v*(+$('s-'+j).value)*($('f-'+j).checked?-1:1))}
+
+// Send each moving joint's speed every SEND_MS (that renewal is what keeps it moving), and
+// release a joint as soon as its demand drops to zero.
+let pumpTimer=null;
+function pump(){
+  const want=demand();
+  for(const j of joints){
+    const sp=armed?speedOf(j,want[j]||0):0;
+    $('m-'+j).style.cssText=sp?`left:${sp>0?50:50+sp/maxSpeed*50}%;width:${Math.abs(sp)/maxSpeed*50}%`:'';
+    if(sp){sentNonZero[j]=true;call('POST','/hold',{joint:j,speed:sp}).catch(onFail)}
+    else if(sentNonZero[j]){delete sentNonZero[j];call('POST','/release',{joint:j}).catch(()=>{})}}
+  const active=joints.some(j=>sentNonZero[j]);
+  if(active&&!pumpTimer)pumpTimer=setInterval(pump,SEND_MS);
+  if(!active&&pumpTimer){clearInterval(pumpTimer);pumpTimer=null}}
+function onFail(e){if(e.network)return;note(e.message,true);if(e.status)show(e.status);stopLocal()}
+function stopLocal(){releaseSticks();for(const k in keys)delete keys[k];pump()}
+
+// -- status ---------------------------------------------------------------------------
+let noteUntil=0;
+function note(t,warn){$('status').textContent=t;$('status').className='status'+(warn?' warn':'');noteUntil=Date.now()+3000}
+function banner(t,info){const b=$('banner');b.hidden=!t;b.textContent=t||'';b.className=info?'info':''}
+function dot(id,state){$(id).className='dot '+state}
 let built=false;
 function show(s){
-  if(!built&&s.joints){maxSpeed=s.max_speed||80;buildJoints(s.joints);built=true}
-  armed=!!s.armed;if(!armed){mine=false;releaseAll()}
-  $('arm').textContent=armed?'Armed · tap to disarm':'Arm to move';$('arm').className=armed?'armed':'';
-  $('joints').classList.toggle('off',!armed);
-  const L=s.link||{};
-  $('bridge-dot').className='dot '+(L.bridge?'ok':'bad');$('bridge-txt').textContent=L.bridge?'USB':'not found';
-  $('arm-dot').className='dot '+(L.arm?'ok':'bad');$('arm-txt').textContent=L.arm?`${L.name||'arm'} ${L.version||''}`:'offline';
-  for(const j of s.joints||[]){const v=(s.running||{})[j]||0;
-    if($('r-'+j))$('r-'+j).textContent=v?`moving ${v>0?'+':''}${v}%`:'stopped';
-    $('j-'+j)?.classList.toggle('moving',!!v)}
-  if(s.error)setStatus(s.error,true);
-  else setStatus((armed?'Armed — the arm can move. ':L.arm?'Disarmed. ':'Waiting for the arm… ')+`Last: ${s.last}`)}
+  if(!built&&s.joints){joints=s.joints;maxSpeed=s.max_speed||80;buildRows();built=true}
+  const wasArmed=armed;armed=!!s.armed;if(!armed){mine=false;if(wasArmed)stopLocal()}
+  const L=s.link||{};linkOk=L.state==='ok';
+  dot('srv-dot','ok');$('srv-txt').textContent='connected';
+  dot('bridge-dot',L.bridge?'ok':'bad');$('bridge-txt').textContent=L.bridge?'USB':'not found';
+  // one missed ping reply every so often is normal radio life; only flag a run of them
+  const weak=(L.misses||0)>=2;
+  dot('arm-dot',linkOk?(weak?'warn':'ok'):'bad');
+  $('arm-txt').textContent=linkOk?`${L.name||'arm'} ${L.version||''}${weak?' (weak signal)':''}`:({stock:'stock firmware',lost:'not answering',connecting:'searching…'}[L.state]||L.state);
+  $('arm').textContent=armed?'ARMED':'ARM';$('arm').className=armed?'armed':'';
+  $('remote').classList.toggle('armed',armed);
+  for(const s of ['L','R'])$('stick-'+s).classList.toggle('disabled',!armed);
+  $('led').className='led '+(armed?'armed':linkOk?'ok':'bad');
+  banner(s.problem&&!linkOk?s.problem:(L.health&&L.health.crash?`The arm restarted after a crash: ${L.health.crash}`:''),!!(L.health&&L.health.crash&&linkOk));
+  if(Date.now()>noteUntil){
+    const moving=Object.entries(s.running||{}).filter(([,v])=>v).map(([j,v])=>`${LABEL[j]||j} ${v>0?'+':''}${v}%`);
+    $('status').className='status'+(s.error?' warn':'');
+    $('status').textContent=s.error?s.error:(armed?(moving.length?'Moving: '+moving.join(', '):'Armed: push a stick.'):linkOk?`Disarmed. Last: ${s.last}`:'Waiting for the arm…')}}
 
 async function lease(){
-  try{show(armed&&mine?await postJSON('/arm',{armed:true,renew:true}):await getJSON('/status'))}
-  catch(e){setStatus('Server offline: start web/arm_server.py on the Mac.',true);$('bridge-dot').className=$('arm-dot').className='dot bad'}
+  try{
+    if(armed&&mine){try{show(await call('POST','/arm',{armed:true,renew:true}))}
+      catch(e){if(e.network)throw e;mine=false;note('Disarmed: '+e.message,true);if(e.status)show(e.status)}}
+    else show(await call('GET','/status'))}
+  catch(e){if(e.network&&netFails>=2){
+      dot('srv-dot','bad');$('srv-txt').textContent='unreachable';dot('bridge-dot','');dot('arm-dot','');
+      banner('Can’t reach the Robo Arm server. Is web/arm_server.py running on the Mac?');
+      if(armed){armed=false;mine=false;stopLocal()}}}
   setTimeout(lease,1000)}
-lease();
-$('arm').onclick=async()=>{try{mine=!armed;show(await postJSON('/arm',{armed:!armed}))}catch(e){mine=false;setStatus(e.message,true)}};
-async function estop(){releaseAll();armed=false;mine=false;try{show(await postJSON('/stop',{from:'page STOP'}))}catch(e){}}
+
+$('arm').onclick=async()=>{
+  try{if(armed){mine=false;show(await call('POST','/arm',{armed:false}))}
+    else{mine=true;show(await call('POST','/arm',{armed:true}));note('Armed: push a stick.')}}
+  catch(e){mine=false;note(e.network?'Can’t reach the server.':e.message,true);if(e.status)show(e.status)}};
+async function estop(){stopLocal();armed=false;mine=false;noteUntil=0;
+  try{show(await call('POST','/stop',{from:'page STOP'}))}catch(e){}}
 $('stop').onclick=estop;
 addEventListener('keydown',e=>{
   const k=e.key.toLowerCase();
   if(k==='escape'||k===' '){e.preventDefault();estop();return}
-  const m=keyJoint[k];if(!m||e.repeat||e.metaKey||e.ctrlKey)return;e.preventDefault();press(m[0],m[1])});
-addEventListener('keyup',e=>{const m=keyJoint[e.key.toLowerCase()];if(m&&held[m[0]]===m[1])release(m[0])});
-addEventListener('blur',releaseAll);
+  const m=KEYS[k];if(!m||e.metaKey||e.ctrlKey||e.altKey)return;e.preventDefault();if(e.repeat)return;
+  if(!armed){note('ARM first.',true);return}
+  keys[m[0]]=m[1];pump()});
+addEventListener('keyup',e=>{const m=KEYS[e.key.toLowerCase()];if(m&&keys[m[0]]===m[1]){delete keys[m[0]];pump()}});
+addEventListener('blur',stopLocal);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stopLocal()});
 addEventListener('pagehide',()=>{if(armed&&mine)navigator.sendBeacon('/stop','{"from":"page closed"}')});
+setupStick('L');setupStick('R');lease();
 </script></body></html>

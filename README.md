@@ -103,14 +103,33 @@ Open http://localhost:8020/ on the Mac, or http://robo-arm.local:8020/ from a ph
 Wi-Fi. Other devices need the password in `web/.dashboard-password`, which is created on first
 run and gitignored. STOP works without logging in.
 
-Arm, then hold a joint's buttons or keys: base <kbd>A</kbd>/<kbd>D</kbd>, shoulder
-<kbd>W</kbd>/<kbd>S</kbd>, elbow <kbd>↑</kbd>/<kbd>↓</kbd>. Letting go stops the joint.
-<kbd>Esc</kbd> or <kbd>Space</kbd> is STOP. Each joint has a speed slider and a "Flip direction"
-box, both remembered in the browser.
+The page is a digital copy of the CyberBrick remote. Press ARM, then push a stick. The
+further you push, the faster the joint moves, and letting go stops it.
 
-Safety layers: the page's 3 s arm lease, a hold that lapses 0.35 s after the page stops renewing
-it, and the arm's own 0.6 s radio failsafe. The server owns the bridge's USB port, so the rover's
-drive server can't run at the same time. Tests: `.venv/bin/python -m unittest web/test_arm_server.py`.
+- **L stick:** ↔ base, ↕ shoulder.
+- **R stick:** ↕ elbow. Its ↔ axis is reserved for the gripper.
+- **Keys:** base <kbd>A</kbd>/<kbd>D</kbd>, shoulder <kbd>W</kbd>/<kbd>S</kbd>, elbow
+  <kbd>↑</kbd>/<kbd>↓</kbd>. <kbd>Esc</kbd> or <kbd>Space</kbd> is STOP.
+
+Each joint has a top-speed slider and a "Flip" box. "One direction per stick" ignores the smaller
+axis of a diagonal push. These settings are remembered in the browser.
+
+Safety layers:
+- The page's 3 s arm lease.
+- Each joint's hold lapses 0.35 s after the page stops renewing it.
+- The arm's own 0.6 s radio failsafe.
+
+The arm only counts as lost after 3 failed pings in a row, so a stray lost packet doesn't
+disarm. The server recognises an arm that fell back to the stock firmware and tells you to
+power-cycle it. All radio work runs on one worker thread, so the page never waits on the radio.
+The server owns the bridge's USB port, so the rover's drive server can't run at the same time.
+
+Tests: `.venv/bin/python -m unittest discover web`. A fake radio models a running arm, lost
+packets, the stock firmware, an arm that's switched off, and a slow link.
+
+Firmware updates over the radio: `.venv/bin/python tools/update_robot.py`. It waits for the
+arm, pushes `firmware/cbb`, and checks the new version. Each reply from the arm includes its
+uptime, error counts, and any crash traceback from its last run.
 
 ## Protocol
 

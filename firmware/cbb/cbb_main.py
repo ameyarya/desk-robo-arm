@@ -17,9 +17,10 @@ import network
 import espnow
 
 CONFIG_PATH = "/cbb_config.json"
+CRASH_PATH = "/cbb_crash.txt"
 BROADCAST = b"\xff" * 6
 CHANNEL = 1
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 
 def load_config():
@@ -63,6 +64,10 @@ def radio():
     except OSError:
         pass
     w.config(channel=CHANNEL)
+    try:
+        w.config(pm=w.PM_NONE)  # no Wi-Fi power saving: it drops ESP-NOW packets
+    except (AttributeError, ValueError, OSError):
+        pass
     e = espnow.ESPNow()
     e.active(True)
     return w, e
@@ -117,23 +122,27 @@ def run_bridge(cfg):
             emit({"id": rid, "ok": False, "err": "unknown op %s" % op})
 
     while True:
-        while poll.poll(0):
-            c = sys.stdin.read(1)
-            if c == "\n":
-                if line.strip():
-                    try:
-                        handle(ujson.loads(line))
-                    except Exception as ex:
-                        emit({"ok": False, "err": "bad request: %s" % ex})
-                line = ""
-            elif c != "\r":
-                line += c
-        mac, msg = e.recv(5)
-        if mac:
-            try:
-                emit({"ev": "rx", "from": hexmac(mac), "msg": ujson.loads(msg)})
-            except ValueError:
-                pass
+        try:
+            while poll.poll(0):
+                c = sys.stdin.read(1)
+                if c == "\n":
+                    if line.strip():
+                        try:
+                            handle(ujson.loads(line))
+                        except Exception as ex:
+                            emit({"ok": False, "err": "bad request: %s" % ex})
+                    line = ""
+                elif c != "\r":
+                    line += c
+            mac, msg = e.recv(5)
+            if mac:
+                try:
+                    emit({"ev": "rx", "from": hexmac(mac), "msg": ujson.loads(msg)})
+                except ValueError:
+                    pass
+        except Exception as ex:  # stay up: the Mac can't reach a crashed bridge
+            emit({"ev": "error", "err": "%r" % ex})
+            time.sleep_ms(50)
 
 
 # -------------------------------------------------------------- receiver
@@ -239,9 +248,15 @@ def run_receiver(cfg):
     act = Actuators()
     led = StatusLed()
     led.set(12, 6, 0)  # amber: waiting for bridge
-    last_rx = time.ticks_ms()
-    print("[cbb] receiver %s mac=%s bridge=%s" % (
-        name, hexmac(w.config("mac")), hexmac(bridge) if bridge else None))
+    boot_ms = last_rx = time.ticks_ms()
+    # reported in hello so the Mac can see trouble the board can't print without USB;
+    # crash is the traceback boot.py saved when a previous run fell over
+    health = {"errors": 0, "failsafe": 0, "last_error": None, "crash": None}
+    try:
+        with open(CRASH_PATH) as f:
+            health["crash"] = f.read()[-160:]
+    except OSError:
+        pass
 
     def reply(obj):
         try:
@@ -263,7 +278,10 @@ def run_receiver(cfg):
             led.set(*cmd["rgb"])
         elif op in ("hello", "ping"):
             reply({"op": op, "seq": cmd.get("seq"), "name": name,
-                   "version": VERSION, "moving": len(act.moving)})
+                   "version": VERSION, "moving": len(act.moving),
+                   "up_s": time.ticks_diff(time.ticks_ms(), boot_ms) // 1000,
+                   "errors": health["errors"], "failsafe": health["failsafe"],
+                   "last_error": health["last_error"], "crash": health["crash"]})
         elif op == "ka":
             pass
         elif op == "batch":
@@ -276,19 +294,31 @@ def run_receiver(cfg):
                 time.sleep_ms(200)
                 machine.reset()
 
+    # Nothing may leave this loop: an exception out of main() drops the board to
+    # the stock firmware (boot.py's fallback), which the bridge can't talk to.
     while True:
-        mac, msg = e.recv(20)
-        if mac and mac == bridge:
+        try:
+            mac, msg = e.recv(20)
+            if mac and mac == bridge:
+                try:
+                    apply(ujson.loads(msg))
+                    last_rx = time.ticks_ms()
+                    led.set(0, 12, 0)
+                except Exception as ex:
+                    health["errors"] += 1
+                    health["last_error"] = "cmd: %r" % ex
+            if act.moving and time.ticks_diff(time.ticks_ms(), last_rx) > timeout_ms:
+                act.stop_all()
+                health["failsafe"] += 1
+                led.set(12, 0, 0)  # red: failsafe tripped
+        except Exception as ex:
+            health["errors"] += 1
+            health["last_error"] = "loop: %r" % ex
             try:
-                apply(ujson.loads(msg))
-                last_rx = time.ticks_ms()
-                led.set(0, 12, 0)
-            except Exception as ex:
-                print("[cbb] bad cmd:", ex)
-        if act.moving and time.ticks_diff(time.ticks_ms(), last_rx) > timeout_ms:
-            act.stop_all()
-            led.set(12, 0, 0)  # red: failsafe tripped
-            print("[cbb] failsafe stop")
+                act.stop_all()
+            except Exception:
+                pass
+            time.sleep_ms(50)
 
 
 def main():
