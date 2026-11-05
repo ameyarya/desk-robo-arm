@@ -131,6 +131,21 @@ Firmware updates over the radio: `.venv/bin/python tools/update_robot.py`. It wa
 arm, pushes `firmware/cbb`, and checks the new version. Each reply from the arm includes its
 uptime, error counts, and any crash traceback from its last run.
 
+### Keep it running (macOS login service)
+
+To serve the page all the time, starting at login and restarting if the server exits, install a
+LaunchAgent at `~/Library/LaunchAgents/com.<you>.robo-arm.plist`. It runs
+`.venv/bin/python -u web/arm_server.py` with `RunAtLoad` and `KeepAlive`, uses the repo as its
+working directory, and logs to `~/Library/Logs/robo-arm.log`. Then:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.<you>.robo-arm.plist   # start, and at every login
+launchctl bootout gui/$(id -u)/com.<you>.robo-arm                                  # stop (frees the bridge's USB port)
+```
+
+While it runs, it holds the bridge board's USB port, so stop it before using `tools/` scripts or
+another program on the bridge.
+
 ## Protocol
 
 Mac → bridge: one JSON object per line, for example
