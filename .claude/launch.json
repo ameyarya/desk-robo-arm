@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "robo-arm-web",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["-u", "web/arm_server.py"],
+      "port": 8020
+    }
+  ]
+}
