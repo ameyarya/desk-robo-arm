@@ -19,9 +19,10 @@ import espnow
 
 CONFIG_PATH = "/cbb_config.json"
 CRASH_PATH = "/cbb_crash.txt"
+MOTION_OPS = ("motor", "servo_speed", "servo_angle", "batch", "ka")
 BROADCAST = b"\xff" * 6
 CHANNEL = 1
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 
 
 def load_config():
@@ -304,8 +305,12 @@ def run_receiver(cfg):
             mac, msg = e.recv(20)
             if mac and mac == bridge:
                 try:
-                    apply(ujson.loads(msg))
-                    last_rx = time.ticks_ms()
+                    cmd = ujson.loads(msg)
+                    apply(cmd)
+                    # only motion commands (and a library keepalive) hold off the failsafe:
+                    # pings and status checks must never keep a joint moving
+                    if cmd.get("op") in MOTION_OPS:
+                        last_rx = time.ticks_ms()
                     led.set(0, 12, 0)
                 except Exception as ex:
                     health["errors"] += 1

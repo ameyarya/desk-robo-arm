@@ -19,6 +19,7 @@ without logging in. The page is web/arm.html.
   as lost (and everything disarms) only after LOST_AFTER failed pings in a row.
 """
 import argparse
+import collections
 import hashlib
 import hmac
 import json
@@ -48,7 +49,10 @@ PING_S = 1.0
 PING_REPLY_S = 0.4
 LOST_AFTER = 3          # failed pings in a row before the arm counts as lost
 RECONNECT_S = 2.0
-RETRY_S = 0.1           # after a send the arm didn't ack, wait this long before trying again
+RETRY_S = 0.1           # after a stop-a-joint command the arm didn't ack, try again this soon
+RENEW_S = 0.2           # re-send a moving joint's speed this often (the arm's failsafe is 0.6 s)
+STOP_RETRY_S = 0.15     # re-send an unacknowledged STOP this often
+FAILSAFE_S = 0.6        # the arm firmware's failsafe (failsafe_ms in its cbb_config.json)
 LOGIN_PAGE = '''<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>Robo Arm</title><style>:root{color-scheme:dark}body{margin:0;min-height:100vh;display:grid;place-items:center;
 background:#10151d;color:#edf2fa;font-family:system-ui;padding:16px}form{background:#19212d;border:1px solid #2c3748;
@@ -87,49 +91,69 @@ class ArmControl:
     """Arm lease, per-joint holds and the radio link, independent of HTTP.
 
     Request methods (set_armed, hold, release, stop, status) only touch state under `lock` and
-    return at once. `service()` (the worker thread) does every radio call: connecting, pinging
-    and sending the joint speeds the state asks for. Tests drive tick()/service() by hand with
-    a fake clock and fake radio.
+    return at once. `service()` (the worker thread) does every radio call. Tests drive
+    tick()/service() by hand with a fake clock and fake radio.
+
+    How motion stays safe:
+    - While a joint should move, its speed command is re-sent every RENEW_S. Nothing else is
+      sent to keep it alive (no keepalives), so the moment the page lets go, disarms, or this
+      process dies, the arm's own failsafe stops it within its failsafe time.
+    - A joint that should stop gets a 0 command, re-sent until the arm acknowledges it.
+    - STOP (disarm, lease lapse, page STOP, link lost) is sent whatever the link looks like and
+      re-sent every STOP_RETRY_S until the arm acknowledges it; it is sent again when a lost
+      link comes back. Until then the page shows the arm as possibly still moving.
 
     `connect()` returns (bridge, robot, info) or raises; it is retried every RECONNECT_S.
     `pinger(bridge, mac)` returns (reply, why) as ping() does.
     """
 
-    def __init__(self, connect, joints=ARM_JOINTS, clock=time.monotonic, pinger=ping):
+    def __init__(self, connect, joints=ARM_JOINTS, clock=time.monotonic, pinger=ping, wall=time.time,
+                 log=print):
         self.connect = connect
         self.pinger = pinger
         self.joints = [j for j, (kind, _) in joints.items() if kind != 'angle']
         self.clock = clock
+        self.wall = wall
+        self.printer = log
         self.lock = threading.Lock()
         self.bridge = self.robot = None
         self.armed = False
         self.lease_until = 0.0
         self.holds = {}          # joint -> (speed, until): what the page asks for
-        self.running = {}        # joint -> speed the arm last acknowledged
-        self.stop_pending = False
+        self.sent = {}           # joint -> last speed commanded (the arm may be doing this)
+        self.renew_at = {}       # joint -> when to re-send its (non-zero) speed
+        self.stop_pending = None  # reason, while a STOP waits for the arm's ack
+        self.stop_attempts = 0
+        self.stop_since = 0.0
+        self.next_stop = 0.0
         self.link = {'state': 'connecting', 'bridge': False, 'mac': None, 'name': None, 'version': None,
-                     'misses': 0, 'why': None, 'health': None, 'rtt_ms': None}
+                     'misses': 0, 'why': None, 'health': None, 'rtt_ms': None, 'last_reply_s': None}
+        self.last_reply = None
         self.error = None
         self.last = 'nothing yet'
         self.next_ping = 0.0
         self.next_connect = 0.0
-        self.retry_at = 0.0
+        self.events = collections.deque(maxlen=60)
+        self._log('info', 'server started; looking for the bridge board and the arm')
 
     # -- page requests (fast, never touch the radio) --------------------------
 
-    def set_armed(self, armed, renew=False):
+    def set_armed(self, armed, renew=False, who='page'):
         with self.lock:
             if armed:
                 if self.link['state'] != 'ok':
-                    raise Refused(self._link_problem() or 'the arm is not connected')
+                    raise Refused('cannot arm: ' + (self._link_problem() or 'the arm is not connected'))
                 if renew and not self.armed:
                     raise Refused('disarmed: ' + self.last)
+                if self.stop_pending:
+                    raise Refused('cannot arm yet: still waiting for the arm to confirm the last STOP')
+                if not self.armed:
+                    self._log('info', f'armed by the {who}')
+                    self.last = f'armed by the {who}'
                 self.armed = True
                 self.lease_until = self.clock() + LEASE_S
-                if not renew:
-                    self.last = 'armed'
-            else:
-                self._stop_locked('disarmed')
+            elif self.armed:
+                self._stop_locked(f'disarmed by the {who}')
             return self._status_locked()
 
     def hold(self, joint, speed):
@@ -137,7 +161,7 @@ class ArmControl:
             if joint not in self.joints:
                 raise Refused(f'unknown joint {joint!r}')
             if not self.armed:
-                raise Refused('arm first')
+                raise Refused('not armed: press ARM first')
             speed = int(round(float(speed) / SPEED_STEP) * SPEED_STEP)
             speed = max(-MAX_SPEED, min(MAX_SPEED, speed))
             if speed:
@@ -151,7 +175,7 @@ class ArmControl:
             self.holds.pop(joint, None)
             return self._status_locked()
 
-    def stop(self, reason='STOP'):
+    def stop(self, reason='STOP pressed'):
         with self.lock:
             self._stop_locked(reason)
             return self._status_locked()
@@ -167,40 +191,28 @@ class ArmControl:
         with self.lock:
             now = self.clock()
             if self.armed and now > self.lease_until:
-                self._stop_locked('lease lapsed (page closed or lost its connection)')
+                self._stop_locked('lease lapsed: the page stopped renewing it (closed, asleep, or lost '
+                                  'its connection)')
             for joint, (_, until) in list(self.holds.items()):
                 if now > until:
                     del self.holds[joint]
 
     def service(self):
-        """All radio work: connect, ping, and send whatever the state asks for."""
+        """All radio work: connect, ping, STOP and the joint speeds."""
         now = self.clock()
         if self.robot is None:
             if now >= self.next_connect:
                 self.next_connect = now + RECONNECT_S
                 self._connect()
             return
-        if self.link['state'] != 'ok':
+        if self.stop_pending:
+            if now >= self.next_stop:
+                self._send_stop(now)
+        else:
             with self.lock:
-                self.stop_pending = False   # nothing to send to; the arm's failsafe has it stopped
-        elif now >= self.retry_at:
-            with self.lock:
-                stop = self.stop_pending
-                self.stop_pending = False
-                want = {j: s for j, (s, _) in self.holds.items()}
-                running = dict(self.running)
-            if stop:
-                if self._radio(lambda: self.robot.stop(), on_ok=lambda: self.running.clear()):
-                    running = {}
-                else:
-                    with self.lock:
-                        self.stop_pending = True   # STOP is retried until the arm acks it
+                want = {j: s for j, (s, _) in self.holds.items()} if self.armed else {}
             for joint in self.joints:
-                speed = want.get(joint, 0)
-                if running.get(joint, 0) != speed:
-                    # a failed send is retried shortly (running stays different until acked)
-                    self._radio(lambda: self.robot.move(joint, speed),
-                                on_ok=lambda: self.running.__setitem__(joint, speed))
+                self._drive(joint, want.get(joint, 0), now)
         if now >= self.next_ping:
             self.next_ping = now + PING_S
             self._ping()
@@ -212,75 +224,137 @@ class ArmControl:
                 self.service()
             except Exception as error:   # keep the watchdog alive whatever happens
                 with self.lock:
-                    self.error = f'internal: {error}'
+                    self.error = f'internal error in the control loop: {error!r}'
+                    self._log('error', self.error)
             time.sleep(0.03)
 
     # -- internals -----------------------------------------------------------
 
-    def _radio(self, call, on_ok):
+    def _send(self, msg):
+        """One radio send. True if the arm acknowledged it."""
         try:
-            call()
+            return bool(self.bridge.send(self.robot.mac, msg))
         except Exception as error:
             with self.lock:
-                self.error = str(error)
-            self.retry_at = self.clock() + RETRY_S
+                self.error = f'bridge board error: {error}'
             return False
+
+    def _drive(self, joint, speed, now):
+        last = self.sent.get(joint, 0)
+        if speed == last and (not speed or now < self.renew_at.get(joint, 0)):
+            return
+        acked = self._send(self.robot.command(joint, speed))
         with self.lock:
-            on_ok()
-            if self.error and self.link['state'] == 'ok':
+            if speed:
+                # sent either way: the arm may have heard it even without an ack
+                self.sent[joint] = speed
+                self.renew_at[joint] = now + RENEW_S
+                if speed != last:
+                    self._log('info', f'{joint} {"starts" if not last else "changes to"} {speed:+d}%')
+            elif acked:
+                self.sent.pop(joint, None)
+                self._log('info', f'{joint} stopped')
+            else:
+                self.renew_at[joint] = now + RETRY_S   # retry the 0 shortly
+            if not acked and self.link['state'] == 'ok':
+                self.error = f'{joint}: the arm did not acknowledge the command; retrying'
+            elif acked and self.error and self.error.startswith(joint + ':'):
                 self.error = None
-        return True
+
+    def _send_stop(self, now):
+        self.stop_attempts += 1
+        acked = self._send({'op': 'stop'})
+        with self.lock:
+            if acked:
+                took = now - self.stop_since
+                self._log('info', f'STOP confirmed by the arm ({self.stop_attempts} '
+                                  f'{"try" if self.stop_attempts == 1 else "tries"}, {took * 1000:.0f} ms)')
+                self.stop_pending = None
+                self.sent.clear()
+                self.renew_at.clear()
+                if self.error and self.error.startswith('STOP'):
+                    self.error = None
+            else:
+                self.next_stop = now + (STOP_RETRY_S if self.stop_attempts < 15 else 1.0)
+                if self.stop_attempts in (1, 5) or self.stop_attempts % 25 == 0:
+                    self._log('warn', f'STOP not acknowledged yet (try {self.stop_attempts}); retrying. '
+                                      f'The arm stops on its own {FAILSAFE_S:.1f} s after the last motion command.')
+                if self.link['state'] == 'ok':
+                    self.error = f'STOP sent, waiting for the arm to confirm (try {self.stop_attempts})'
 
     def _connect(self):
         try:
             bridge, robot, info = self.connect()
         except Exception as error:
             with self.lock:
-                # a BridgeError from the scan means the bridge is fine but no arm answered
-                found_bridge = isinstance(error, BridgeError) and ('robot' in str(error) or 'loader' in str(error))
-                self.link.update(state='connecting', why=str(error), bridge=found_bridge)
-                self.error = str(error)
+                bridge_ok = isinstance(error, BridgeError)
+                why = str(error)
+                if why != self.link['why']:
+                    self._log('warn', why)
+                self.link.update(state='connecting', why=why, bridge=bridge_ok)
+                self.error = None
             return
         with self.lock:
             self.bridge, self.robot = bridge, robot
             self.link.update(state='ok', bridge=True, misses=0, why=None, **info)
+            self.last_reply = self.clock()
             self.error = None
+            self._log('info', f"found the arm '{info.get('name')}' ({info.get('mac')}), firmware {info.get('version')}")
+            # whatever it was doing before this server started, make sure it is stopped
+            self._stop_locked('server connected to the arm', quiet=True)
 
     def _ping(self):
         t = time.monotonic()
         try:
             reply, why = self.pinger(self.bridge, self.robot.mac)
         except Exception as error:   # the bridge itself failed (unplugged?)
-            reply, why = None, f'bridge: {error}'
+            reply, why = None, f'bridge board error: {error}'
         with self.lock:
+            now = self.clock()
             if reply is not None:
+                was = self.link['state']
+                old = self.link.get('health') or {}
+                health = {k: reply.get(k) for k in ('up_s', 'errors', 'failsafe', 'last_error', 'crash', 'mem')}
                 self.link.update(state='ok', misses=0, why=None, version=reply.get('version'),
-                                 rtt_ms=round((time.monotonic() - t) * 1000),
-                                 health={k: reply.get(k) for k in
-                                         ('up_s', 'errors', 'failsafe', 'last_error', 'crash', 'mem')})
-                if self.error and self.error.startswith('arm lost'):
+                                 rtt_ms=round((time.monotonic() - t) * 1000), health=health)
+                self.last_reply = now
+                if was != 'ok':
+                    self._log('info', f'the arm is answering again (firmware {reply.get("version")}, '
+                                      f'up {health.get("up_s")} s)')
+                    self._stop_locked('link came back', quiet=True)   # make sure it is stopped
+                if old.get('up_s') is not None and (health.get('up_s') or 0) < old['up_s']:
+                    self._log('warn', f'the arm restarted (uptime went from {old["up_s"]} s to {health.get("up_s")} s)')
+                if (health.get('failsafe') or 0) > (old.get('failsafe') or 0) and old:
+                    self._log('warn', 'the arm\'s failsafe stopped it: it got no motion command for '
+                                      f'{FAILSAFE_S:.1f} s while moving')
+                if (health.get('errors') or 0) > (old.get('errors') or 0) and old:
+                    self._log('warn', f'the arm reported a firmware error: {health.get("last_error")}')
+                if health.get('crash') and health.get('crash') != old.get('crash'):
+                    self._log('error', f'the arm\'s firmware crashed earlier: {health["crash"]}')
+                if self.error and self.error.startswith('arm '):
                     self.error = None
                 return
             self.link['misses'] += 1
             self.link['why'] = why
             if self.link['misses'] >= LOST_AFTER and self.link['state'] == 'ok':
-                # acks without replies: our firmware isn't running. If it replied earlier
-                # this session it hung or crashed; otherwise it may be the stock firmware.
                 self.link['state'] = 'silent' if why == 'acked but no reply' else 'lost'
-                if self.armed or self.holds:
+                self._log('error', 'arm lost: ' + self._link_problem())
+                if self.armed or self.holds or self.sent:
                     self._stop_locked('arm lost')
-                self.running = {}   # the arm's own failsafe has stopped it by now
-                self.error = 'arm lost: ' + self._link_problem()
-            if why and why.startswith('bridge:'):
+            if why.startswith('bridge'):
                 self.link['bridge'] = False
                 if self.link['misses'] >= LOST_AFTER:
                     self._drop_bridge_locked()
 
     def _drop_bridge_locked(self):
         """Forget a failed bridge (unplugged, or its port died) so the worker reopens it."""
+        self._log('error', 'the bridge board stopped responding on USB (unplugged?); reconnecting')
         self.robot = self.bridge = None
-        self.running = {}
-        self.link.update(state='connecting', bridge=False, why='bridge board lost; reconnecting')
+        self.armed = False
+        self.holds.clear()
+        self.sent.clear()
+        self.stop_pending = None
+        self.link.update(state='connecting', bridge=False, why='bridge board lost on USB; reconnecting')
         reset = getattr(self.connect, 'reset', None)
         if reset:
             try:
@@ -288,28 +362,57 @@ class ArmControl:
             except Exception:
                 pass
 
+    def _ago(self):
+        if self.last_reply is None:
+            return 'no reply yet'
+        return f'last reply {self.clock() - self.last_reply:.0f} s ago'
+
     def _link_problem(self):
         state = self.link['state']
         if state == 'silent':
-            return ('the arm acknowledges the radio but its firmware has stopped replying (hung, or '
-                    'crashed into the stock CyberBrick firmware). Switch the arm off and on.')
+            return ("the arm's radio acknowledges packets but its firmware has not replied to "
+                    f"{self.link['misses']} pings in a row ({self._ago()}). Its firmware has stopped "
+                    "running: switch the arm off and on.")
         if state == 'lost':
-            return f"the arm stopped answering ({self.link['why']}): is it switched on?"
+            return (f"no radio acknowledgement from the arm for {self.link['misses']} pings in a row "
+                    f"({self._ago()}). It is switched off, out of battery, or out of range.")
         if state == 'connecting':
-            return self.link['why'] or 'looking for the arm'
+            return self.link['why'] or 'looking for the bridge board and the arm'
         return None
 
-    def _stop_locked(self, reason):
+    def _stop_locked(self, reason, quiet=False):
+        was_armed = self.armed
         self.armed = False
         self.holds.clear()
-        self.stop_pending = True
-        self.last = reason
+        if not self.stop_pending:
+            self.stop_attempts = 0
+            self.stop_since = self.clock()
+        self.stop_pending = reason
+        self.next_stop = 0.0
+        if not quiet or was_armed:
+            self.last = reason
+            self._log('warn' if reason.startswith(('arm lost', 'lease')) else 'info',
+                      f'STOP: {reason}')
+
+    def _log(self, level, msg):
+        entry = {'t': time.strftime('%H:%M:%S', time.localtime(self.wall())), 'level': level, 'msg': msg}
+        self.events.append(entry)
+        try:
+            self.printer(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.wall()))} "
+                         f"{level.upper():5} {msg}", flush=True)
+        except Exception:
+            pass
 
     def _status_locked(self):
-        return {'armed': self.armed, 'joints': self.joints, 'running': dict(self.running),
-                'wanted': {j: s for j, (s, _) in self.holds.items()}, 'link': dict(self.link),
-                'problem': self._link_problem(), 'error': self.error, 'last': self.last,
-                'max_speed': MAX_SPEED}
+        link = dict(self.link)
+        link['last_reply_s'] = None if self.last_reply is None else round(self.clock() - self.last_reply, 1)
+        moving = {j: s for j, s in self.sent.items() if s}
+        return {'armed': self.armed, 'joints': self.joints,
+                'running': moving,               # what the arm may be doing right now
+                'wanted': {j: s for j, (s, _) in self.holds.items()},
+                'stopping': self.stop_pending, 'stop_attempts': self.stop_attempts if self.stop_pending else 0,
+                'link': link, 'problem': self._link_problem(), 'error': self.error, 'last': self.last,
+                'events': list(self.events)[-25:], 'max_speed': MAX_SPEED}
 
 
 def make_connect(port, name, mac):
@@ -328,7 +431,7 @@ def make_connect(port, name, mac):
             if (mac and robot_mac == mac) or (not mac and info.get('name') == name):
                 if info.get('version') == 'loader':
                     raise BridgeError(f'{robot_mac} is still running the install loader; run tools/finish_install.py')
-                robot = Robot(bridge, robot_mac)
+                robot = Robot(bridge, robot_mac, keepalive=False)
                 return bridge, robot, {'mac': robot_mac, 'name': info.get('name'), 'version': info.get('version')}
         raise BridgeError(f'no robot named {name!r} answered (is it on? if it was just restarted, give it 5 s)'
                           + (f'; saw {sorted(found)}' if found else ''))
@@ -364,7 +467,7 @@ class QuietServer(ThreadingHTTPServer):
             super().handle_error(request, client_address)
 
 
-def make_handler(control, password, local=('127.0.0.1', '::1')):
+def make_handler(control, password, local=('127.0.0.1', '::1'), sim=None):
     token = session_token(password)
 
     class Handler(BaseHTTPRequestHandler):
@@ -429,6 +532,12 @@ def make_handler(control, password, local=('127.0.0.1', '::1')):
             if not self.authorized():
                 return self.reply(401, {'error': 'log in first'})
             body = self.body()
+            if self.path == '/sim' and sim is not None:   # --simulate only: break the simulated radio
+                for key in ('mode', 'drop', 'ack_loss'):
+                    if key in body:
+                        setattr(sim, key, body[key])
+                return self.reply(200, {'mode': sim.mode, 'drop': sim.drop, 'ack_loss': sim.ack_loss,
+                                        'arm_moving': {f'{k[0]}{k[1]}': v for k, v in sim.arm_moving().items()}})
             try:
                 if self.path == '/arm':
                     return self.reply(200, control.set_armed(bool(body.get('armed')), bool(body.get('renew'))))
@@ -469,14 +578,16 @@ def main():
     parser.add_argument('--simulate', action='store_true', help='no hardware: a simulated arm (for trying the page)')
     args = parser.parse_args()
 
+    sim = None
     if args.simulate:
         from sim import sim_connect
         connect = sim_connect()
+        sim = connect.bridge
     else:
         connect = make_connect(args.usb, args.robot, args.mac)
     control = ArmControl(connect)
     threading.Thread(target=control.run, daemon=True).start()
-    server = QuietServer((args.bind, args.port), make_handler(control, dashboard_password()))
+    server = QuietServer((args.bind, args.port), make_handler(control, dashboard_password(), sim=sim))
     mdns = None
     if args.bind not in ('127.0.0.1', 'localhost'):
         ip = lan_ip()

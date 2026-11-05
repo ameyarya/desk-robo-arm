@@ -70,7 +70,14 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;ma
 .meter{height:6px;border-radius:3px;background:#0b1018;position:relative;overflow:hidden;margin-top:3px}
 .meter i{position:absolute;top:0;bottom:0;left:50%;background:var(--accent);width:0}
 .opt{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--dim);margin-top:10px;cursor:pointer}
-.status{font-size:12px;color:var(--dim);line-height:1.6;margin:0}
+.status{font-size:13px;color:var(--fg);line-height:1.6;margin:0}
+.status.warn{color:var(--warn)}.status.bad{color:var(--bad)}
+.log{grid-column:1/-1}
+.log ol{list-style:none;margin:0;padding:0;max-height:220px;overflow:auto;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
+.log li{display:grid;grid-template-columns:64px 44px 1fr;gap:8px;padding:2px 0;border-bottom:1px solid #ffffff08}
+.log li time{color:var(--dim2)}.log li b{font-weight:600;color:var(--dim)}
+.log li.warn b{color:var(--warn)}.log li.error b{color:var(--bad)}.log li.error span{color:#fecaca}
+#banner.stopping{border-color:#7c2d12;background:#2a1708}
 .status.warn{color:var(--warn)}
 kbd{font:11px ui-monospace,monospace;padding:1px 5px;border:1px solid var(--line2);border-bottom-width:2px;border-radius:5px;color:var(--fg)}
 .hint{font-size:12px;line-height:1.8;color:var(--dim);margin:8px 0 0}
@@ -115,6 +122,10 @@ kbd{font:11px ui-monospace,monospace;padding:1px 5px;border:1px solid var(--line
     <p class="hint">ARM, then push the thumbstick or the side stick: the further you push, the faster the joint moves. Let go and it stops.<br>
       Keys: base <kbd>A</kbd><kbd>D</kbd> · shoulder <kbd>W</kbd><kbd>S</kbd> · elbow <kbd>↑</kbd><kbd>↓</kbd> · STOP <kbd>Esc</kbd>/<kbd>Space</kbd><br>
       Closing the page or losing the connection stops the arm.</p>
+  </section>
+  <section class="card log">
+    <h2>Event log</h2>
+    <ol id="events"><li><span></span><b></b><span>Waiting for the server…</span></li></ol>
   </section>
 </div>
 </div>
@@ -245,11 +256,31 @@ function show(s){
   dot('arm-dot',linkOk?(weak?'warn':'ok'):'bad');
   $('arm-txt').textContent=linkOk?`${L.name||'arm'} ${L.version||''}${weak?' (weak signal)':''}`:({silent:'not replying',lost:'not answering',connecting:'searching…'}[L.state]||L.state);
   showArmed();
-  banner(s.problem&&!linkOk?s.problem:(L.health&&L.health.crash?`The arm restarted after a crash: ${L.health.crash}`:''),!!(L.health&&L.health.crash&&linkOk));
+  const moving=Object.entries(s.running||{}).filter(([,v])=>v).map(([j,v])=>`${LABEL[j]||j} ${v>0?'+':''}${v}%`);
+  if(s.stopping){
+    banner(`Stopping (${s.stopping}): STOP sent ${s.stop_attempts} time${s.stop_attempts===1?'':'s'}, waiting for the arm to confirm. `+
+      `Whatever happens to the radio, the arm stops by itself 0.6 s after its last motion command.`);$('banner').className='stopping'}
+  else if(s.problem)banner('Arm: '+s.problem);
+  else if(L.health&&L.health.crash)banner(`The arm's firmware crashed before its last restart: ${L.health.crash}`,true);
+  else banner('');
   if(Date.now()>noteUntil){
-    const moving=Object.entries(s.running||{}).filter(([,v])=>v).map(([j,v])=>`${LABEL[j]||j} ${v>0?'+':''}${v}%`);
-    $('status').className='status'+(s.error?' warn':'');
-    $('status').textContent=s.error?s.error:(armed?(moving.length?'Moving: '+moving.join(', '):'Armed: push a stick.'):linkOk?`Disarmed. Last: ${s.last}`:'Waiting for the arm…')}}
+    let text,cls='';
+    if(s.stopping){text='Stopping: waiting for the arm to confirm STOP.';cls='bad'}
+    else if(!linkOk){text=s.problem||'Looking for the arm.';cls='warn'}
+    else if(s.error){text=s.error;cls='warn'}
+    else if(armed)text=moving.length?'Armed. Moving: '+moving.join(', ')+'.':'Armed: push the thumbstick or the side stick.';
+    else text=`Disarmed (${s.last}). Press ARM to move the arm.`;
+    $('status').className='status '+cls;$('status').textContent=text}
+  showEvents(s.events||[])}
+let lastEvents='';
+function showEvents(evs){
+  const key=evs.length?evs[evs.length-1].t+evs[evs.length-1].msg+evs.length:'';
+  if(key===lastEvents)return;lastEvents=key;
+  const ol=$('events');ol.innerHTML='';
+  for(const e of evs.slice().reverse()){const li=document.createElement('li');li.className=e.level;
+    li.innerHTML='<time></time><b></b><span></span>';
+    li.children[0].textContent=e.t;li.children[1].textContent=e.level==='info'?'':e.level;li.children[2].textContent=e.msg;
+    ol.appendChild(li)}}
 
 async function lease(){
   try{
@@ -258,7 +289,8 @@ async function lease(){
     else show(await call('GET','/status'))}
   catch(e){if(e.network&&netFails>=2){
       dot('srv-dot','bad');$('srv-txt').textContent='unreachable';dot('bridge-dot','');dot('arm-dot','');
-      banner('Can’t reach the Robo Arm server. Is web/arm_server.py running on the Mac?');
+      banner('Can’t reach the Robo Arm server on this Mac (2 requests in a row failed). It runs as the '+
+        'com.ameyarya.robo-arm login service, which restarts it within seconds; if this stays, check ~/Library/Logs/robo-arm.log.');
       linkOk=false;armed=false;mine=false;stopLocal();showArmed();   // the server's lease disarms it too
       $('status').className='status warn';$('status').textContent='No connection to the server: the arm is stopped.'}}
   setTimeout(lease,1000)}
@@ -266,7 +298,7 @@ async function lease(){
 $('arm').onclick=async()=>{
   try{if(armed){mine=false;show(await call('POST','/arm',{armed:false}))}
     else{mine=true;show(await call('POST','/arm',{armed:true}));note('Armed: push a stick.')}}
-  catch(e){mine=false;note(e.network?'Can’t reach the server.':e.message,true);if(e.status)show(e.status)}};
+  catch(e){mine=false;if(e.status)show(e.status);note(e.network?'Can’t reach the Robo Arm server.':e.message.charAt(0).toUpperCase()+e.message.slice(1),true)}};
 async function estop(){stopLocal();armed=false;mine=false;noteUntil=0;showArmed();
   try{show(await call('POST','/stop',{from:'page STOP'}))}catch(e){}}
 $('stop').onclick=estop;

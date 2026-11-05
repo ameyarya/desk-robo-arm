@@ -1,16 +1,13 @@
-"""Tests for the web app's control core and HTTP API, with a fake radio.
+"""Tests for the web app's control core and HTTP API, against the simulated arm in sim.py.
 
-The fake bridge stands in for the USB bridge board and models the arm on the other end of the
-radio: running our firmware (acks and replies), a single lost packet, the stock CyberBrick
-firmware after a crash fallback (acks, never replies), switched off (no ack), and a slow link.
-The real Robot class and the real ping() run on top of it.
+The simulated arm runs its joints and its own failsafe, so the tests check what the arm actually
+does, not just what was sent. The real Robot class and the real ping() run on top of it.
 
 Run: .venv/bin/python -m unittest discover web
 """
 import http.client
 import json
 import os
-import queue
 import sys
 import threading
 import time
@@ -19,44 +16,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(__file__))
 import arm_server  # noqa: E402
 from arm_server import ArmControl, Refused, ping  # noqa: E402
-from cyberbrick_bridge import Robot  # noqa: E402
-
-MAC = 'aabbccddeeff'
-
-
-class FakeBridge:
-    """Bridge.send()/events/drain() as the real one, with the arm simulated in `mode`."""
-
-    def __init__(self):
-        self.mode = 'cbb'        # 'cbb' | 'stock' | 'off'
-        self.drop = 0            # drop the next N packets (no ack)
-        self.delay = 0.0         # seconds each send takes (a slow link)
-        self.sent = []
-        self.events = queue.Queue()
-        self.lock = threading.Lock()
-
-    def send(self, mac, msg):
-        if self.delay:
-            time.sleep(self.delay)
-        with self.lock:
-            self.sent.append(msg)
-            if self.mode == 'off' or self.drop:
-                self.drop = max(0, self.drop - 1)
-                return False
-        if self.mode == 'cbb' and msg.get('op') == 'ping':
-            self.events.put({'ev': 'rx', 'from': mac,
-                             'msg': {'op': 'ping', 'name': 'arm', 'version': '0.2.0', 'up_s': 5,
-                                     'errors': 0, 'failsafe': 0, 'last_error': None, 'crash': None}})
-        return True
-
-    def drain(self):
-        while not self.events.empty():
-            self.events.get_nowait()
-
-    def moves(self):
-        """The motion commands sent (ignoring pings and keepalives)."""
-        with self.lock:
-            return [m for m in self.sent if m.get('op') not in ('ping', 'ka')]
+from sim import SimBridge, sim_connect  # noqa: E402
 
 
 class Clock:
@@ -68,75 +28,172 @@ class Clock:
 
 
 class Rig:
-    """An ArmControl wired to a FakeBridge and a real Robot, driven by hand."""
+    """An ArmControl wired to a simulated arm, stepped by hand with a fake clock."""
 
-    def __init__(self, connect_ok=True):
+    def __init__(self, connect_ok=True, failsafe_counts='motion'):
         self.clock = Clock()
-        self.bridge = FakeBridge()
+        self.bridge = SimBridge(clock=self.clock, failsafe_counts=failsafe_counts)
         self.connect_ok = connect_ok
+        self.connect_error = arm_server.BridgeError("no robot named 'arm' answered")
+        real = sim_connect(self.bridge)
+        self.log = []
 
         def connect():
             if not self.connect_ok:
-                raise arm_server.BridgeError("no robot named 'arm' answered")
-            return self.bridge, Robot(self.bridge, MAC), {'mac': MAC, 'name': 'arm', 'version': '0.2.0'}
+                raise self.connect_error
+            return real()
 
-        self.control = ArmControl(connect, clock=self.clock,
-                                  pinger=lambda b, m: ping(b, m, timeout=0.02))
+        self.control = ArmControl(connect, clock=self.clock, pinger=lambda b, m: ping(b, m, timeout=0.02),
+                                  log=lambda line, **kw: self.log.append(line))
         self.step()   # connects
+        self.step()   # sends the "make sure it's stopped" STOP
 
     def step(self, dt=0.0):
         self.clock.t += dt
         self.control.tick()
         self.control.service()
 
-    def pings(self, n):
-        """Run n ping rounds."""
-        for _ in range(n):
-            self.step(arm_server.PING_S + 0.01)
+    def run(self, seconds, dt=0.03, renew_lease=True, hold=None):
+        """Run the worker for `seconds`, like the real loop; optionally keep the page's lease and a hold."""
+        end = self.clock.t + seconds
+        while self.clock.t < end:
+            if renew_lease and self.control.armed:
+                self.control.set_armed(True, renew=True)
+            if hold and self.control.armed:
+                self.control.hold(*hold)
+            self.step(dt)
 
-    def armed(self):
+    def arm(self):
         self.control.set_armed(True)
         return self
+
+    def events(self):
+        return [e['msg'] for e in self.control.events]
+
+
+class RunawayTest(unittest.TestCase):
+    """The arm must stop whatever happens to the radio. (It once kept spinning after a disarm.)"""
+
+    def test_no_keepalive_packets_are_ever_sent(self):
+        r = Rig().arm()
+        r.run(1.0, hold=('base', 40))
+        r.run(1.0)
+        self.assertNotIn('ka', [m['op'] for m in r.bridge.sent])
+
+    def test_release_stops_the_arm_even_if_every_later_packet_is_lost(self):
+        r = Rig().arm()
+        r.run(0.5, hold=('base', 40))
+        self.assertTrue(r.bridge.arm_moving())
+        r.bridge.mode = 'off'                       # radio dead from here on
+        r.run(arm_server.FAILSAFE_S + 0.1)
+        self.assertEqual(r.bridge.arm_moving(), {})
+        self.assertGreaterEqual(r.bridge.failsafe_trips, 1)
+
+    def test_disarm_with_lost_acks_stops_the_arm_and_keeps_sending_stop(self):
+        # the reported bug: STOP's ack lost, packets still arriving, arm kept going
+        r = Rig().arm()
+        r.run(0.5, hold=('elbow', 30))
+        r.bridge.ack_loss = 10_000                  # everything arrives, no ack ever comes back
+        n = len(r.bridge.moves())
+        r.control.stop('page STOP')
+        r.run(2.0)
+        self.assertEqual(r.bridge.arm_moving(), {})
+        ops = [m['op'] for m in r.bridge.moves()[n:]]
+        self.assertEqual(set(ops), {'stop'})        # only STOPs after the disarm, no motion
+        s = r.control.status()
+        self.assertFalse(s['armed'])
+        self.assertTrue(s['stopping'])
+        r.bridge.ack_loss = 0
+        r.run(0.3)
+        self.assertIsNone(r.control.status()['stopping'])
+        self.assertTrue(any('STOP confirmed' in e for e in r.events()))
+
+    def test_old_firmware_that_counts_pings_still_stops(self):
+        # firmware before 0.2.2 refreshed its failsafe on any packet, pings included
+        r = Rig(failsafe_counts='any').arm()
+        r.run(0.5, hold=('shoulder', 30))
+        r.bridge.drop = 10_000                      # the release and STOP never arrive
+        r.control.stop('page STOP')
+        r.bridge.drop = 0
+        r.bridge.ack_loss = 0
+        # pings still arrive (one per second) but STOPs are being lost: model it by losing all
+        # stop commands and keeping pings
+        orig = r.bridge._arrive
+        r.bridge._arrive = lambda m: None if m.get('op') == 'stop' else orig(m)
+        r.run(2.0)
+        self.assertEqual(r.bridge.arm_moving(), {})
+
+    def test_link_lost_while_moving_sends_stop_and_again_when_it_returns(self):
+        r = Rig().arm()
+        r.run(0.5, hold=('base', 40))
+        r.bridge.mode = 'off'
+        r.run(arm_server.PING_S * (arm_server.LOST_AFTER + 1), hold=('base', 40))
+        s = r.control.status()
+        self.assertEqual(s['link']['state'], 'lost')
+        self.assertFalse(s['armed'])
+        stops_while_lost = sum(m['op'] == 'stop' for m in r.bridge.sent)
+        self.assertGreater(stops_while_lost, 2)     # kept trying although the link looked dead
+        r.bridge.mode = 'cbb'
+        r.run(arm_server.PING_S + 0.2)
+        s = r.control.status()
+        self.assertEqual(s['link']['state'], 'ok')
+        self.assertIsNone(s['stopping'])            # a STOP got through after the link came back
+        self.assertEqual(r.bridge.arm_moving(), {})
+        self.assertTrue(any('answering again' in e for e in r.events()))
+
+    def test_lease_lapse_stops_the_arm(self):
+        r = Rig().arm()
+        r.run(0.5, hold=('base', 40))
+        r.run(arm_server.LEASE_S + 0.5, renew_lease=False, hold=('base', 40))   # page stops renewing
+        self.assertFalse(r.control.status()['armed'])
+        self.assertEqual(r.bridge.arm_moving(), {})
+        self.assertTrue(any('lease lapsed' in e for e in r.events()))
+
+    def test_cannot_arm_until_stop_is_confirmed(self):
+        r = Rig().arm()
+        r.bridge.ack_loss = 10_000
+        r.control.stop('test')
+        r.step()
+        with self.assertRaises(Refused) as e:
+            r.control.set_armed(True)
+        self.assertIn('confirm the last STOP', str(e.exception))
+        r.bridge.ack_loss = 0
+        r.run(0.3)
+        r.control.set_armed(True)
 
 
 class LinkTest(unittest.TestCase):
     def test_one_lost_ping_does_not_disconnect_or_disarm(self):
-        # the reported bug: a single missed radio ack flipped the page to offline and disarmed
-        r = Rig().armed()
+        r = Rig().arm()
         r.bridge.drop = 1
-        r.control.lease_until = r.clock.t + 60
-        r.pings(1)
+        r.run(arm_server.PING_S * 2 + 0.1)
         s = r.control.status()
         self.assertEqual(s['link']['state'], 'ok')
         self.assertTrue(s['armed'])
-        r.pings(1)
-        self.assertEqual(r.control.status()['link']['misses'], 0)
 
-    def test_lost_after_consecutive_misses_then_recovers(self):
-        r = Rig().armed()
-        r.control.lease_until = r.clock.t + 60
+    def test_lost_after_consecutive_misses_with_a_precise_reason(self):
+        r = Rig().arm()
         r.bridge.mode = 'off'
-        r.pings(arm_server.LOST_AFTER - 1)
+        r.run(arm_server.PING_S * (arm_server.LOST_AFTER - 1) + 0.1)
         self.assertEqual(r.control.status()['link']['state'], 'ok')
-        r.pings(1)
+        r.run(arm_server.PING_S + 0.1)
         s = r.control.status()
         self.assertEqual(s['link']['state'], 'lost')
         self.assertFalse(s['armed'])
-        self.assertIn('switched on', s['problem'])
-        r.bridge.mode = 'cbb'
-        r.pings(1)
-        s = r.control.status()
-        self.assertEqual(s['link']['state'], 'ok')
-        self.assertIsNone(s['error'])
-        r.control.set_armed(True)   # can arm again
+        self.assertIn('no radio acknowledgement', s['problem'])
+        self.assertIn('pings in a row', s['problem'])
+        self.assertIn('switched off, out of battery, or out of range', s['problem'])
+        with self.assertRaises(Refused) as e:
+            r.control.set_armed(True)
+        self.assertIn('cannot arm', str(e.exception))
 
-    def test_acks_without_replies_are_recognised(self):
+    def test_acks_without_replies_are_reported_as_stopped_firmware(self):
         r = Rig()
         r.bridge.mode = 'stock'
-        r.pings(arm_server.LOST_AFTER)
+        r.run(arm_server.PING_S * arm_server.LOST_AFTER + 0.1)
         s = r.control.status()
         self.assertEqual(s['link']['state'], 'silent')
-        self.assertIn('off and on', s['problem'])
+        self.assertIn('switch the arm off and on', s['problem'])
 
     def test_arming_refused_with_the_reason_until_connected(self):
         r = Rig(connect_ok=False)
@@ -145,140 +202,118 @@ class LinkTest(unittest.TestCase):
         self.assertIn('no robot', str(e.exception))
         self.assertTrue(r.control.status()['link']['bridge'])
         r.connect_ok = True
-        r.step(arm_server.RECONNECT_S + 0.01)
+        r.run(arm_server.RECONNECT_S + 0.1)
         r.control.set_armed(True)
 
     def test_unplugged_bridge_is_reopened(self):
-        r = Rig().armed()
-        r.control.lease_until = r.clock.t + 60
+        r = Rig().arm()
         resets = []
         r.control.connect.reset = lambda: resets.append(1)
-        unplugged = FakeBridge()
-        unplugged.send = lambda mac, msg: (_ for _ in ()).throw(OSError('device disconnected'))
-        r.control.bridge = r.control.robot.bridge = unplugged
-        r.pings(arm_server.LOST_AFTER)
+        r.bridge.send = lambda mac, msg: (_ for _ in ()).throw(OSError('device disconnected'))
+        r.connect_ok = False                         # and it can't be reopened while unplugged
+        r.connect_error = OSError('bridge board not found on USB')
+        r.run(arm_server.PING_S * arm_server.LOST_AFTER + 0.1)
         s = r.control.status()
         self.assertFalse(s['armed'])
         self.assertEqual(s['link']['state'], 'connecting')
         self.assertFalse(s['link']['bridge'])
         self.assertEqual(resets, [1])
-        r.step(arm_server.RECONNECT_S + 0.01)   # plugged back in: connect() works again
-        s = r.control.status()
-        self.assertEqual(s['link']['state'], 'ok')
-        self.assertTrue(s['link']['bridge'])
-        r.control.set_armed(True)
+        del r.bridge.send                            # plugged back in
+        r.connect_ok = True
+        r.run(arm_server.RECONNECT_S + 0.5)
+        self.assertEqual(r.control.status()['link']['state'], 'ok')
 
-    def test_ping_reports_health(self):
-        r = Rig()
-        r.pings(1)
-        link = r.control.status()['link']
-        self.assertEqual(link['health']['up_s'], 5)
-        self.assertEqual(link['version'], '0.2.0')
+    def test_arm_restart_and_failsafe_are_logged(self):
+        r = Rig().arm()
+        r.run(0.3, hold=('base', 40))
+        r.bridge.mode = 'off'                         # stop renewals reaching it: failsafe trips
+        r.run(0.8)
+        r.bridge.mode = 'cbb'
+        r.run(arm_server.PING_S + 0.1)
+        self.assertTrue(any("failsafe stopped it" in e for e in r.events()))
+        r.bridge.started = r.clock.t                 # uptime goes back to 0: a restart
+        r.run(arm_server.PING_S + 0.1)
+        self.assertTrue(any('the arm restarted' in e for e in r.events()))
 
 
 class MotionTest(unittest.TestCase):
     def test_refuses_to_move_while_disarmed(self):
         r = Rig()
-        with self.assertRaises(Refused):
+        with self.assertRaises(Refused) as e:
             r.control.hold('base', 40)
-        r.step()
-        self.assertEqual(r.bridge.moves(), [])
+        self.assertIn('press ARM', str(e.exception))
+        r.run(0.3)
+        self.assertEqual(r.bridge.arm_moving(), {})
 
-    def test_hold_moves_once_then_stops_when_not_renewed(self):
-        r = Rig().armed()
-        r.control.hold('shoulder', 30)
-        r.step()
-        self.assertEqual(r.bridge.moves(), [{'op': 'servo_speed', 'ch': 1, 'v': 30}])
-        r.control.hold('shoulder', 30)   # renewal: nothing new on the radio
-        r.step(0.2)
-        self.assertEqual(len(r.bridge.moves()), 1)
-        r.step(arm_server.HOLD_S + 0.01)
+    def test_hold_runs_the_joint_and_renews_it_then_stops(self):
+        r = Rig().arm()
+        n0 = len(r.bridge.moves())
+        r.run(1.0, hold=('shoulder', 30))
+        self.assertEqual(r.bridge.arm_moving(), {('servo_speed', 1): 30})
+        renewals = [m for m in r.bridge.moves()[n0:] if m == {'op': 'servo_speed', 'ch': 1, 'v': 30}]
+        self.assertGreaterEqual(len(renewals), int(1.0 / arm_server.RENEW_S) - 1)
+        r.run(arm_server.HOLD_S + 0.1)               # page lets go
+        self.assertEqual(r.bridge.arm_moving(), {})
         self.assertEqual(r.bridge.moves()[-1], {'op': 'servo_speed', 'ch': 1, 'v': 0})
-        self.assertEqual(r.control.status()['running'], {'shoulder': 0})
+        n1 = len(r.bridge.moves())
+        r.run(1.0)                                   # nothing more is sent while stopped
+        self.assertEqual(len(r.bridge.moves()), n1)
 
-    def test_joystick_speeds_are_rounded_and_only_changes_are_sent(self):
-        r = Rig().armed()
-        for speed in (21, 19, 22, 37, 38):
+    def test_joystick_speeds_are_rounded(self):
+        r = Rig().arm()
+        for speed, want in ((21, 20), (19, 20), (37, 35), (38, 40)):
             r.control.hold('base', speed)
             r.step()
-        # 21/19/22 all round to 20 (one command); 37 -> 35; 38 -> 40
-        self.assertEqual([m['v'] for m in r.bridge.moves()], [20, 35, 40])
-        self.assertEqual(r.control.status()['running'], {'base': 40})
+            self.assertEqual(r.control.status()['running'], {'base': want})
 
     def test_speed_is_clamped(self):
-        r = Rig().armed()
+        r = Rig().arm()
         r.control.hold('elbow', -500)
         r.step()
-        self.assertEqual(r.bridge.moves()[-1]['v'], -arm_server.MAX_SPEED)
+        self.assertEqual(r.bridge.arm_moving(), {('servo_speed', 2): -arm_server.MAX_SPEED})
 
-    def test_zero_hold_releases(self):
-        r = Rig().armed()
-        r.control.hold('elbow', 30)
-        r.step()
-        r.control.hold('elbow', 0)
-        r.step()
-        self.assertEqual(r.bridge.moves()[-1]['v'], 0)
-
-    def test_failed_move_is_retried_until_acked(self):
-        r = Rig().armed()
+    def test_a_lost_zero_command_is_retried(self):
+        r = Rig().arm()
+        r.run(0.3, hold=('base', 40))
         r.bridge.drop = 2
-        r.control.hold('base', 40)
-        r.step()
+        r.control.release('base')
+        r.run(0.5)
+        self.assertEqual(r.bridge.arm_moving(), {})
         self.assertEqual(r.control.status()['running'], {})
-        r.step(0.01)                       # within RETRY_S: no new attempt
-        self.assertEqual(len(r.bridge.moves()), 1)
-        r.step(arm_server.RETRY_S)
-        r.step(arm_server.RETRY_S)
-        self.assertEqual(r.control.status()['running'], {'base': 40})
-        self.assertTrue(r.control.status()['armed'])
-
-    def test_stop_disarms_and_is_retried_until_acked(self):
-        r = Rig().armed()
-        r.control.hold('base', 40)
-        r.step()
-        r.bridge.drop = 1
-        s = r.control.stop('test')
-        self.assertFalse(s['armed'])
-        r.step()                            # stop not acked
-        r.step(arm_server.RETRY_S + 0.01)   # retried
-        self.assertEqual([m['op'] for m in r.bridge.moves()].count('stop'), 2)
-        self.assertEqual(r.control.status()['running'], {})
-
-    def test_lease_lapse_disarms_and_stops(self):
-        r = Rig().armed()
-        r.control.hold('base', 40)
-        r.step()
-        for _ in range(int(arm_server.LEASE_S / 0.2) + 2):   # keep holding, never renew the lease
-            try:
-                r.control.hold('base', 40)
-            except Refused:
-                break
-            r.step(0.2)
-        s = r.control.status()
-        self.assertFalse(s['armed'])
-        self.assertIn('lease lapsed', s['last'])
-        self.assertEqual(r.bridge.moves()[-1], {'op': 'stop'})
 
     def test_renewing_after_a_server_side_disarm_says_why(self):
-        r = Rig().armed()
+        r = Rig().arm()
         r.control.stop('page STOP')
         with self.assertRaises(Refused) as e:
             r.control.set_armed(True, renew=True)
         self.assertIn('page STOP', str(e.exception))
 
+    def test_events_describe_what_happened(self):
+        r = Rig().arm()
+        r.run(0.3, hold=('elbow', -30))
+        r.run(0.5)
+        r.control.stop('STOP pressed')
+        r.run(0.3)
+        ev = r.events()
+        for expected in ('found the arm', 'armed by the page', 'elbow starts -30%', 'elbow stopped',
+                         'STOP: STOP pressed', 'STOP confirmed by the arm'):
+            self.assertTrue(any(expected in e for e in ev), f'{expected!r} not in {ev}')
+        self.assertTrue(any('STOP: STOP pressed' in line for line in r.log))   # also in the log file
+
 
 class ConcurrencyTest(unittest.TestCase):
-    def test_status_and_hold_never_wait_for_the_radio(self):
-        r = Rig().armed()
-        r.bridge.delay = 1.0                 # every radio call now takes a second
+    def test_requests_never_wait_for_the_radio(self):
+        r = Rig().arm()
+        r.bridge.delay = 1.0
         r.control.hold('base', 40)
         worker = threading.Thread(target=r.control.service)
         worker.start()
-        time.sleep(0.05)                     # the worker is inside a slow send
+        time.sleep(0.05)
         t = time.monotonic()
         r.control.status()
         r.control.hold('base', 40)
         r.control.set_armed(True, renew=True)
+        r.control.stop('test')
         self.assertLess(time.monotonic() - t, 0.05)
         worker.join()
 
@@ -294,35 +329,33 @@ class HttpTest(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
 
-    def call(self, method, path, body=None, headers=None):
+    def call(self, method, path, body=None):
         conn = http.client.HTTPConnection('127.0.0.1', self.port, timeout=3)
-        conn.request(method, path, body=None if body is None else json.dumps(body), headers=headers or {})
+        conn.request(method, path, body=None if body is None else json.dumps(body))
         res = conn.getresponse()
         data = res.read()
         conn.close()
-        ctype = res.getheader('Content-Type', '')
-        return res.status, (json.loads(data) if 'json' in ctype else data), res
+        return res.status, (json.loads(data) if 'json' in res.getheader('Content-Type', '') else data)
 
     def test_page_and_status(self):
-        status, page, _ = self.call('GET', '/')
+        status, page = self.call('GET', '/')
         self.assertEqual(status, 200)
         self.assertIn(b'Robo Arm', page)
-        status, s, _ = self.call('GET', '/status')
-        self.assertEqual(status, 200)
+        status, s = self.call('GET', '/status')
         self.assertEqual(s['link']['state'], 'ok')
+        self.assertIn('events', s)
 
     def test_refusals_come_back_as_409_with_reason_and_status(self):
-        status, body, _ = self.call('POST', '/hold', {'joint': 'base', 'speed': 40})
+        status, body = self.call('POST', '/hold', {'joint': 'base', 'speed': 40})
         self.assertEqual(status, 409)
-        self.assertEqual(body['error'], 'arm first')
+        self.assertIn('press ARM', body['error'])
         self.assertIn('link', body['status'])
 
     def test_arm_hold_stop_round_trip(self):
         self.assertEqual(self.call('POST', '/arm', {'armed': True})[0], 200)
-        status, s, _ = self.call('POST', '/hold', {'joint': 'elbow', 'speed': -30})
-        self.assertEqual(status, 200)
+        status, s = self.call('POST', '/hold', {'joint': 'elbow', 'speed': -30})
         self.assertEqual(s['wanted'], {'elbow': -30})
-        status, s, _ = self.call('POST', '/stop', {'from': 'test'})
+        status, s = self.call('POST', '/stop', {'from': 'test'})
         self.assertFalse(s['armed'])
         self.assertEqual(s['last'], 'test')
 
@@ -331,27 +364,14 @@ class HttpTest(unittest.TestCase):
         conn.request('POST', '/stop', body='{not json', headers={'Content-Length': '9'})
         self.assertEqual(conn.getresponse().status, 200)
 
-    def test_status_is_fast_while_the_radio_is_slow(self):
-        self.call('POST', '/arm', {'armed': True})
-        self.call('POST', '/hold', {'joint': 'base', 'speed': 40})
-        self.rig.bridge.delay = 1.0
-        worker = threading.Thread(target=self.rig.control.service)
-        worker.start()
-        time.sleep(0.05)
-        t = time.monotonic()
-        for _ in range(5):
-            self.assertEqual(self.call('GET', '/status')[0], 200)
-        self.assertLess(time.monotonic() - t, 0.5)
-        worker.join()
-
 
 class LanAuthTest(unittest.TestCase):
     """As seen from another device on the Wi-Fi (no address counts as local)."""
 
     def setUp(self):
         self.rig = Rig()
-        handler = arm_server.make_handler(self.rig.control, 'pw', local=())
-        self.server = arm_server.QuietServer(('127.0.0.1', 0), handler)
+        self.server = arm_server.QuietServer(('127.0.0.1', 0),
+                                             arm_server.make_handler(self.rig.control, 'pw', local=()))
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.port = self.server.server_address[1]
 
@@ -370,11 +390,9 @@ class LanAuthTest(unittest.TestCase):
     def test_stop_works_without_login_but_arming_does_not(self):
         self.assertEqual(self.request('POST', '/stop', b'{}').status, 200)
         self.assertEqual(self.request('POST', '/arm', b'{"armed": true}').status, 401)
-        self.assertFalse(self.rig.control.status()['armed'])
 
     def test_login_cookie_authorizes(self):
-        res = self.request('POST', '/login', b'password=pw',
-                           {'Content-Type': 'application/x-www-form-urlencoded'})
+        res = self.request('POST', '/login', b'password=pw', {'Content-Type': 'application/x-www-form-urlencoded'})
         self.assertEqual(res.status, 303)
         cookie = res.getheader('Set-Cookie').split(';')[0]
         self.assertEqual(self.request('POST', '/arm', b'{"armed": true}', {'Cookie': cookie}).status, 200)

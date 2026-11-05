@@ -19,7 +19,11 @@ KEEPALIVE_S = 0.2  # must stay well under the receiver's failsafe_ms
 
 
 class Robot:
-    def __init__(self, bridge, mac, joints=None, trim=None):
+    """`keepalive=False` sends no keepalive packets: the caller must re-send motion commands
+    itself while a joint should keep moving (the web server does). Keepalives refresh the
+    robot's failsafe, so a lost stop plus running keepalives would keep a joint moving."""
+
+    def __init__(self, bridge, mac, joints=None, trim=None, keepalive=True):
         self.bridge = bridge
         self.mac = mac.lower().replace(":", "")
         self.joints = dict(joints or ARM_JOINTS)
@@ -28,10 +32,15 @@ class Robot:
         self._moving = set()
         self._stop_timers = {}
         self._lock = threading.Lock()
-        self._ka = threading.Thread(target=self._keepalive, daemon=True)
-        self._ka.start()
+        if keepalive:
+            self._ka = threading.Thread(target=self._keepalive, daemon=True)
+            self._ka.start()
 
     # -- low level ---------------------------------------------------------
+
+    def command(self, joint, value):
+        """The radio message that sets `joint` to `value` (speed or angle)."""
+        return self._cmd(joint, value)
 
     def _cmd(self, joint, value):
         kind, ch = self.joints[joint]
@@ -72,11 +81,13 @@ class Robot:
             t = self._stop_timers.pop(joint, None)
             if t:
                 t.cancel()
-            self.send(self._cmd(joint, speed))
+            # update before sending: a stop that gets no ack must still end the keepalives,
+            # or they would keep the robot's failsafe from stopping it
             if speed:
                 self._moving.add(joint)
             else:
                 self._moving.discard(joint)
+            self.send(self._cmd(joint, speed))
             if speed and duration:
                 t = threading.Timer(duration, self.move, (joint, 0))
                 t.daemon = True
