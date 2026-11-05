@@ -22,36 +22,42 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;ma
 #banner{margin-bottom:12px;padding:10px 14px;border-radius:12px;font-size:13px;line-height:1.5;border:1px solid #7f1d1d;background:#2a1215}
 #banner.info{border-color:#35445b;background:#141c28;color:var(--dim)}
 
-/* the remote: a digital copy of the CyberBrick standard remote */
-.remote{position:relative;margin:0 auto;max-width:860px;background:linear-gradient(180deg,var(--shell),var(--shell2));color:var(--shell-ink);
-  border-radius:120px 120px 70px 70px/90px 90px 60px 60px;padding:26px 34px 30px;box-shadow:0 18px 50px #0008,inset 0 2px 0 #fff8,inset 0 -6px 0 #0001;
-  display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:18px;touch-action:none;user-select:none;-webkit-user-select:none}
-.remote.armed{box-shadow:0 0 0 4px #f59e0b88,0 18px 50px #0008,inset 0 2px 0 #fff8}
-.side{display:flex;flex-direction:column;align-items:center;gap:10px}
-.stick-label{font-size:12px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;opacity:.7}
-.axes{font-size:12px;line-height:1.5;text-align:center;opacity:.85;min-height:36px}
-.axes b{font-weight:700}
-.well{--r:110px;position:relative;width:calc(var(--r)*2);height:calc(var(--r)*2);border-radius:50%;
-  background:radial-gradient(circle at 50% 45%,#2b2f36 0%,#1a1d22 70%,#111317 100%);box-shadow:inset 0 6px 14px #000c,0 2px 0 #fff6;touch-action:none;cursor:grab}
-.well::before,.well::after{content:"";position:absolute;background:#ffffff14}
-.well::before{left:50%;top:12%;bottom:12%;width:2px;transform:translateX(-50%)}
-.well::after{top:50%;left:12%;right:12%;height:2px;transform:translateY(-50%)}
-.well .dead{position:absolute;inset:calc(50% - var(--r)*.15);border-radius:50%;border:1px dashed #ffffff22}
-.knob{position:absolute;left:50%;top:50%;width:46%;height:46%;margin:-23% 0 0 -23%;border-radius:50%;
-  background:radial-gradient(circle at 40% 35%,#4a4f59,#23262c 70%);box-shadow:0 6px 12px #000a,inset 0 2px 2px #fff3;transition:transform .12s ease-out;pointer-events:none}
-.well.active .knob{transition:none;background:radial-gradient(circle at 40% 35%,#6fb1ff,#1f5fb0 70%)}
-.well.disabled{opacity:.5;cursor:not-allowed}
-.centre{display:flex;flex-direction:column;align-items:center;gap:12px;min-width:150px}
-.logo{font-size:13px;font-weight:800;letter-spacing:2px;opacity:.55}
-#arm{width:140px;padding:12px;font-weight:700;border-radius:999px;background:#3b3528;color:#f3eee2;border:0}
-#arm.armed{background:var(--arm);color:#1b1206}
-#stop{width:96px;height:96px;border-radius:50%;font-size:20px;font-weight:900;letter-spacing:1px;background:#c81e1e;color:#fff;border:4px solid #7f1212;box-shadow:0 6px 0 #7f1212,0 10px 18px #0006}
+/* the remote: a digital copy of the L-ONE Handle (one-handed CyberBrick remote) */
+.stage{display:grid;grid-template-columns:200px auto 200px;justify-content:center;align-items:center;gap:28px}
+@media(max-width:760px){.stage{grid-template-columns:1fr;justify-items:center;gap:14px}.controls{flex-direction:row!important;order:-1}.legend{display:none}}
+.controls{display:flex;flex-direction:column;align-items:center;gap:14px}
+#arm{width:150px;padding:13px;font-weight:700;border-radius:999px;background:#2a3240;color:#f3eee2;border:1px solid var(--line2)}
+#arm.armed{background:var(--arm);color:#1b1206;border-color:#fbbf24}
+#stop{width:110px;height:110px;border-radius:50%;font-size:22px;font-weight:900;letter-spacing:1px;background:#c81e1e;color:#fff;border:4px solid #7f1212;box-shadow:0 6px 0 #7f1212,0 10px 18px #0006}
 #stop:active{transform:translateY(4px);box-shadow:0 2px 0 #7f1212}
-.led{width:12px;height:12px;border-radius:50%;background:#6b6455;box-shadow:inset 0 1px 2px #0006}
+@media(max-width:760px){#stop{width:84px;height:84px;font-size:17px}}
+.legend{font-size:13px;line-height:1.9;color:var(--dim)}
+.legend b{color:var(--fg)}.legend i{color:var(--dim2)}
+.handle{position:relative;width:240px;display:flex;flex-direction:column;align-items:center;touch-action:none;user-select:none;-webkit-user-select:none;
+  filter:drop-shadow(0 18px 30px #000a)}
+.handle.armed .head,.handle.armed .body{box-shadow:0 0 0 3px #f59e0b99,inset 0 3px 0 #fff9,inset 0 -8px 14px #0002}
+.head{position:relative;z-index:2;width:240px;height:240px;border-radius:50%;display:grid;place-items:center;
+  background:radial-gradient(circle at 38% 30%,#fbf8f0,#e7e1d2 55%,#cfc7b4);box-shadow:inset 0 3px 0 #fff9,inset 0 -8px 14px #0002}
+.body{position:relative;z-index:1;margin-top:-60px;width:150px;height:330px;padding-top:80px;border-radius:40px 40px 75px 75px/40px 40px 120px 120px;
+  background:linear-gradient(90deg,#d9d2c1,#f3efe5 40%,#e3ddce 75%,#c9c1ad);box-shadow:inset 0 3px 0 #fff9,inset 0 -8px 14px #0002;
+  display:flex;flex-direction:column;align-items:center;gap:22px}
+.led{position:absolute;top:28px;width:10px;height:10px;border-radius:50%;background:#8b8473;box-shadow:inset 0 1px 2px #0006}
 .led.ok{background:#22c55e;box-shadow:0 0 10px #22c55e}.led.armed{background:var(--arm);box-shadow:0 0 10px var(--arm)}.led.bad{background:#ef4444;box-shadow:0 0 10px #ef4444}
-@media(max-width:760px){.remote{grid-template-columns:1fr 1fr;border-radius:60px;padding:22px 16px}
-  .centre{grid-column:1/-1;grid-row:1;flex-direction:row;justify-content:center;min-width:0}
-  .well{--r:min(36vw,120px)}#stop{width:76px;height:76px;font-size:16px}#arm{width:120px}}
+.well{position:relative;width:170px;height:170px;border-radius:50%;cursor:grab;touch-action:none;
+  background:radial-gradient(circle at 50% 45%,#5b4a2a 0%,#3a2f1c 60%,#221b10 100%);box-shadow:inset 0 8px 16px #000b,0 2px 0 #fff8}
+.well .dead{position:absolute;inset:36%;border-radius:50%;border:1px dashed #ffffff26}
+.knob{position:absolute;left:50%;top:50%;width:46%;height:46%;margin:-23% 0 0 -23%;border-radius:50%;pointer-events:none;
+  background:radial-gradient(circle at 38% 32%,#fff3a6,#f7cf22 45%,#c99a06);box-shadow:0 8px 12px #0009,inset 0 -3px 4px #0003,inset 0 2px 2px #fff8;transition:transform .12s ease-out}
+.knob::after{content:"";position:absolute;inset:22%;border-radius:50%;background:repeating-radial-gradient(circle,#0000 0 3px,#0001 3px 5px)}
+.active .knob{transition:none;filter:brightness(1.1) saturate(1.2)}
+.rocker{position:relative;width:62px;height:170px;border-radius:31px;cursor:grab;touch-action:none;
+  background:linear-gradient(180deg,#3a2f1c,#221b10);box-shadow:inset 0 6px 12px #000b,0 2px 0 #fff8}
+.rocker::before{content:"";position:absolute;left:50%;top:14px;bottom:14px;width:2px;transform:translateX(-50%);background:#ffffff1c}
+.rocker .knob{width:52px;height:52px;margin:-26px 0 0 -26px}
+.gbtn{width:46px;height:46px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#a29a86,#6d6656);box-shadow:0 3px 0 #4d4738,inset 0 2px 2px #fff5;
+  display:grid;place-items:center;font-size:9px;font-weight:700;color:#f3eee2;opacity:.55;cursor:not-allowed}
+.disabled{opacity:.55;cursor:not-allowed}
+.tag{position:absolute;font-size:11px;font-weight:700;color:#4a4334;letter-spacing:.5px;text-transform:uppercase;opacity:.7}
 
 .below{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin-top:16px}
 @media(max-width:760px){.below{grid-template-columns:1fr}}
@@ -70,7 +76,7 @@ kbd{font:11px ui-monospace,monospace;padding:1px 5px;border:1px solid var(--line
 .hint{font-size:12px;line-height:1.8;color:var(--dim);margin:8px 0 0}
 </style></head><body><div class="wrap">
 <header>
-  <div class="brand"><h1>Robo Arm</h1><span class="sub">L-ONE · digital remote</span></div>
+  <div class="brand"><h1>Robo Arm</h1><span class="sub">L-ONE · digital handle remote</span></div>
   <div class="pills">
     <span class="pill"><span class="dot" id="srv-dot"></span>Server <b id="srv-txt">…</b></span>
     <span class="pill"><span class="dot" id="bridge-dot"></span>Bridge <b id="bridge-txt">…</b></span>
@@ -79,35 +85,34 @@ kbd{font:11px ui-monospace,monospace;padding:1px 5px;border:1px solid var(--line
 </header>
 <div id="banner" hidden></div>
 
-<div class="remote" id="remote">
-  <div class="side">
-    <div class="stick-label">L stick</div>
-    <div class="well" id="stick-L"><div class="dead"></div><div class="knob"></div></div>
-    <div class="axes" id="axes-L"></div>
-  </div>
-  <div class="centre">
-    <div class="logo">CYBERBRICK</div>
-    <span class="led" id="led" title="Off: disarmed · green: connected · amber: armed · red: problem"></span>
+<div class="stage">
+  <div class="controls">
     <button id="arm">ARM</button>
     <button id="stop" title="Esc or Space">STOP</button>
   </div>
-  <div class="side">
-    <div class="stick-label">R stick</div>
-    <div class="well" id="stick-R"><div class="dead"></div><div class="knob"></div></div>
-    <div class="axes" id="axes-R"></div>
+  <div class="handle" id="remote">
+    <div class="head">
+      <span class="led" id="led" title="Off: disarmed · green: connected · amber: armed · red: problem"></span>
+      <div class="well" id="stick-thumb"><div class="dead"></div><div class="knob"></div></div>
+    </div>
+    <div class="body">
+      <div class="rocker" id="stick-rocker"><div class="knob"></div></div>
+      <div class="gbtn" title="Gripper button (no gripper servo fitted)">GRIP</div>
+    </div>
   </div>
+  <div class="legend" id="legend"></div>
 </div>
 
 <div class="below">
   <section class="card">
     <h2>Joints</h2>
     <div id="joint-rows"></div>
-    <label class="opt"><input type="checkbox" id="one-axis">One direction per stick (ignore the smaller of up/down vs left/right)</label>
+    <label class="opt"><input type="checkbox" id="one-axis">Thumbstick moves one joint at a time (ignores the smaller of up/down vs left/right)</label>
   </section>
   <section class="card">
     <h2>Status</h2>
     <p class="status" id="status">Connecting…</p>
-    <p class="hint">ARM, then push a stick: the further you push, the faster the joint moves. Let go and it stops.<br>
+    <p class="hint">ARM, then push the thumbstick or the side stick: the further you push, the faster the joint moves. Let go and it stops.<br>
       Keys: base <kbd>A</kbd><kbd>D</kbd> · shoulder <kbd>W</kbd><kbd>S</kbd> · elbow <kbd>↑</kbd><kbd>↓</kbd> · STOP <kbd>Esc</kbd>/<kbd>Space</kbd><br>
       Closing the page or losing the connection stops the arm.</p>
   </section>
@@ -118,9 +123,10 @@ const $=id=>document.getElementById(id);
 const store={get(k,d){try{const v=localStorage.getItem('arm.'+k);return v===null?d:JSON.parse(v)}catch(e){return d}},
   set(k,v){try{localStorage.setItem('arm.'+k,JSON.stringify(v))}catch(e){}}};
 
-// Which stick axis drives which joint, as on the CyberBrick remote's L-ONE layout. + is
-// right / up. "gripper" is listed so the R stick's x axis says what it's for once fitted.
-const MAP={L:{x:'base',y:'shoulder'},R:{x:'gripper',y:'elbow'}};
+// The L-ONE Handle's controls and the joints they drive (its arm config): the thumbstick
+// (two axes) turns the base and lifts the shoulder, the single-axis stick moves the elbow,
+// the button works the gripper (not fitted here). + is right / up.
+const MAP={thumb:{x:'base',y:'shoulder'},rocker:{y:'elbow'}};
 const LABEL={base:'Base',shoulder:'Shoulder',elbow:'Elbow',gripper:'Gripper'};
 const DIRS={base:['left','right'],shoulder:['down','up'],elbow:['down','up'],gripper:['open','close']};
 const DEFAULT_SPEED={base:40,shoulder:35,elbow:35};
@@ -128,9 +134,11 @@ const KEYS={a:['base',-1],d:['base',1],s:['shoulder',-1],w:['shoulder',1],arrowd
 const DEAD=0.15,SEND_MS=120;
 
 let joints=[],maxSpeed=80,armed=false,mine=false,linkOk=false;
-const stick={L:{x:0,y:0,id:null},R:{x:0,y:0,id:null}};
+const stick={thumb:{x:0,y:0,id:null},rocker:{x:0,y:0,id:null}};
 const keys={};            // joint -> -1/1 while a key is held
 const sentNonZero={};     // joints we've asked to move (so we release them)
+const inflight={};        // joint -> a request is on its way (never stack them)
+const pending={};         // joint -> speed to send once it lands (0 = release)
 
 // -- server calls: tell "server unreachable" apart from "server said no" --------------
 let netFails=0;
@@ -157,15 +165,20 @@ function buildRows(){
     $('f-'+j).onchange=e=>store.set(j+'.flip',e.target.checked)}
   $('one-axis').checked=store.get('oneAxis',true);
   $('one-axis').onchange=e=>store.set('oneAxis',e.target.checked);
-  for(const s of ['L','R']){const m=MAP[s];
-    $('axes-'+s).innerHTML=[['↔',m.x],['↕',m.y]].map(([a,j])=>joints.includes(j)?`${a} <b>${LABEL[j]}</b>`:`${a} ${LABEL[j]} <i>(not fitted)</i>`).join('<br>')}}
+  const name=j=>joints.includes(j)?`<b>${LABEL[j]}</b>`:`${LABEL[j]} <i>(not fitted)</i>`;
+  $('legend').innerHTML=`<div>Thumbstick</div><div>↔ ${name('base')}</div><div>↕ ${name('shoulder')}</div>
+    <div style="margin-top:8px">Side stick</div><div>↕ ${name('elbow')}</div>
+    <div style="margin-top:8px">Button</div><div>${name('gripper')}</div>`}
 
 // -- sticks --------------------------------------------------------------------------
 function setupStick(side){
-  const el=$('stick-'+side),knob=el.querySelector('.knob'),st=stick[side];
-  const move=e=>{const r=el.getBoundingClientRect(),R=r.width/2;
-    let dx=(e.clientX-r.left-R)/R,dy=-(e.clientY-r.top-R)/R;const d=Math.hypot(dx,dy);if(d>1){dx/=d;dy/=d}
-    st.x=dx;st.y=dy;knob.style.transform=`translate(${dx*R*0.62}px,${-dy*R*0.62}px)`;
+  const el=$('stick-'+side),knob=el.querySelector('.knob'),st=stick[side],oneD=!('x' in MAP[side]);
+  const move=e=>{const r=el.getBoundingClientRect(),cx=r.width/2,cy=r.height/2;
+    // travel: how far the knob's centre can go from the middle
+    const tx=oneD?0:cx-knob.offsetWidth/2,ty=cy-knob.offsetHeight/2;
+    let dx=oneD?0:(e.clientX-r.left-cx)/tx,dy=-(e.clientY-r.top-cy)/ty;
+    if(oneD)dy=Math.max(-1,Math.min(1,dy));else{const d=Math.hypot(dx,dy);if(d>1){dx/=d;dy/=d}}
+    st.x=dx;st.y=dy;knob.style.transform=`translate(${dx*tx}px,${-dy*ty}px)`;
     if(!pumpTimer)pump()};   // while a joint moves, the SEND_MS timer sends the latest position
   const end=e=>{if(st.id!==e.pointerId)return;st.id=null;st.x=st.y=0;knob.style.transform='';el.classList.remove('active');pump()};
   el.addEventListener('pointerdown',e=>{
@@ -173,16 +186,16 @@ function setupStick(side){
     st.id=e.pointerId;try{el.setPointerCapture(e.pointerId)}catch(err){}el.classList.add('active');move(e)});
   el.addEventListener('pointermove',e=>{if(st.id===e.pointerId)move(e)});
   el.addEventListener('pointerup',end);el.addEventListener('pointercancel',end);el.addEventListener('lostpointercapture',end)}
-function releaseSticks(){for(const s of ['L','R']){const st=stick[s];st.id=null;st.x=st.y=0;
+function releaseSticks(){for(const s of Object.keys(MAP)){const st=stick[s];st.id=null;st.x=st.y=0;
   const el=$('stick-'+s);el.classList.remove('active');el.querySelector('.knob').style.transform=''}}
 
 function shaped(v){const a=Math.abs(v);if(a<DEAD)return 0;return Math.sign(v)*((a-DEAD)/(1-DEAD))}
 // joint -> -1..1 demand from sticks and keys
 function demand(){
   const out={};
-  for(const s of ['L','R']){let {x,y}=stick[s];
-    if($('one-axis').checked){if(Math.abs(x)>Math.abs(y))y=0;else x=0}
-    out[MAP[s].x]=shaped(x);out[MAP[s].y]=shaped(y)}
+  for(const s of Object.keys(MAP)){let {x,y}=stick[s];const m=MAP[s];
+    if(m.x&&$('one-axis').checked){if(Math.abs(x)>Math.abs(y))y=0;else x=0}
+    if(m.x)out[m.x]=shaped(x);out[m.y]=shaped(y)}
   for(const [j,d] of Object.entries(keys))out[j]=d;
   return out}
 function speedOf(j,v){if(!$('s-'+j))return 0;return Math.round(v*(+$('s-'+j).value)*($('f-'+j).checked?-1:1))}
@@ -195,11 +208,18 @@ function pump(){
   for(const j of joints){
     const sp=armed?speedOf(j,want[j]||0):0;
     $('m-'+j).style.cssText=sp?`left:${sp>0?50:50+sp/maxSpeed*50}%;width:${Math.abs(sp)/maxSpeed*50}%`:'';
-    if(sp){sentNonZero[j]=true;call('POST','/hold',{joint:j,speed:sp}).catch(onFail)}
-    else if(sentNonZero[j]){delete sentNonZero[j];call('POST','/release',{joint:j}).catch(()=>{})}}
+    if(sp){sentNonZero[j]=true;send(j,sp)}
+    else if(sentNonZero[j]){delete sentNonZero[j];send(j,0)}}
   const active=joints.some(j=>sentNonZero[j]);
   if(active&&!pumpTimer)pumpTimer=setInterval(pump,SEND_MS);
   if(!active&&pumpTimer){clearInterval(pumpTimer);pumpTimer=null}}
+// One request per joint at a time, in order: a hold can never land after its release.
+function send(j,sp){
+  if(inflight[j]){pending[j]=sp;return}
+  inflight[j]=true;
+  const req=sp?call('POST','/hold',{joint:j,speed:sp}):call('POST','/release',{joint:j});
+  req.catch(e=>{if(sp)onFail(e)}).finally(()=>{inflight[j]=false;
+    if(j in pending){const next=pending[j];delete pending[j];send(j,next)}})}
 function onFail(e){if(e.network)return;note(e.message,true);if(e.status)show(e.status);stopLocal()}
 function stopLocal(){releaseSticks();for(const k in keys)delete keys[k];pump()}
 
@@ -208,6 +228,11 @@ let noteUntil=0;
 function note(t,warn){$('status').textContent=t;$('status').className='status'+(warn?' warn':'');noteUntil=Date.now()+3000}
 function banner(t,info){const b=$('banner');b.hidden=!t;b.textContent=t||'';b.className=info?'info':''}
 function dot(id,state){$(id).className='dot '+state}
+function showArmed(){
+  $('arm').textContent=armed?'ARMED':'ARM';$('arm').className=armed?'armed':'';
+  $('remote').classList.toggle('armed',armed);
+  for(const s of Object.keys(MAP))$('stick-'+s).classList.toggle('disabled',!armed);
+  $('led').className='led '+(armed?'armed':linkOk?'ok':'bad')}
 let built=false;
 function show(s){
   if(!built&&s.joints){joints=s.joints;maxSpeed=s.max_speed||80;buildRows();built=true}
@@ -218,11 +243,8 @@ function show(s){
   // one missed ping reply every so often is normal radio life; only flag a run of them
   const weak=(L.misses||0)>=2;
   dot('arm-dot',linkOk?(weak?'warn':'ok'):'bad');
-  $('arm-txt').textContent=linkOk?`${L.name||'arm'} ${L.version||''}${weak?' (weak signal)':''}`:({stock:'stock firmware',lost:'not answering',connecting:'searching…'}[L.state]||L.state);
-  $('arm').textContent=armed?'ARMED':'ARM';$('arm').className=armed?'armed':'';
-  $('remote').classList.toggle('armed',armed);
-  for(const s of ['L','R'])$('stick-'+s).classList.toggle('disabled',!armed);
-  $('led').className='led '+(armed?'armed':linkOk?'ok':'bad');
+  $('arm-txt').textContent=linkOk?`${L.name||'arm'} ${L.version||''}${weak?' (weak signal)':''}`:({silent:'not replying',lost:'not answering',connecting:'searching…'}[L.state]||L.state);
+  showArmed();
   banner(s.problem&&!linkOk?s.problem:(L.health&&L.health.crash?`The arm restarted after a crash: ${L.health.crash}`:''),!!(L.health&&L.health.crash&&linkOk));
   if(Date.now()>noteUntil){
     const moving=Object.entries(s.running||{}).filter(([,v])=>v).map(([j,v])=>`${LABEL[j]||j} ${v>0?'+':''}${v}%`);
@@ -237,25 +259,28 @@ async function lease(){
   catch(e){if(e.network&&netFails>=2){
       dot('srv-dot','bad');$('srv-txt').textContent='unreachable';dot('bridge-dot','');dot('arm-dot','');
       banner('Can’t reach the Robo Arm server. Is web/arm_server.py running on the Mac?');
-      if(armed){armed=false;mine=false;stopLocal()}}}
+      linkOk=false;armed=false;mine=false;stopLocal();showArmed();   // the server's lease disarms it too
+      $('status').className='status warn';$('status').textContent='No connection to the server: the arm is stopped.'}}
   setTimeout(lease,1000)}
 
 $('arm').onclick=async()=>{
   try{if(armed){mine=false;show(await call('POST','/arm',{armed:false}))}
     else{mine=true;show(await call('POST','/arm',{armed:true}));note('Armed: push a stick.')}}
   catch(e){mine=false;note(e.network?'Can’t reach the server.':e.message,true);if(e.status)show(e.status)}};
-async function estop(){stopLocal();armed=false;mine=false;noteUntil=0;
+async function estop(){stopLocal();armed=false;mine=false;noteUntil=0;showArmed();
   try{show(await call('POST','/stop',{from:'page STOP'}))}catch(e){}}
 $('stop').onclick=estop;
+// keys drive the arm, so buttons must not keep focus (Space would also "click" ARM)
+for(const b of [$('arm'),$('stop')])b.addEventListener('focus',()=>b.blur());
 addEventListener('keydown',e=>{
   const k=e.key.toLowerCase();
   if(k==='escape'||k===' '){e.preventDefault();estop();return}
   const m=KEYS[k];if(!m||e.metaKey||e.ctrlKey||e.altKey)return;e.preventDefault();if(e.repeat)return;
   if(!armed){note('ARM first.',true);return}
   keys[m[0]]=m[1];pump()});
-addEventListener('keyup',e=>{const m=KEYS[e.key.toLowerCase()];if(m&&keys[m[0]]===m[1]){delete keys[m[0]];pump()}});
+addEventListener('keyup',e=>{if(e.key===' ')e.preventDefault();const m=KEYS[e.key.toLowerCase()];if(m&&keys[m[0]]===m[1]){delete keys[m[0]];pump()}});
 addEventListener('blur',stopLocal);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopLocal()});
 addEventListener('pagehide',()=>{if(armed&&mine)navigator.sendBeacon('/stop','{"from":"page closed"}')});
-setupStick('L');setupStick('R');lease();
+setupStick('thumb');setupStick('rocker');lease();
 </script></body></html>

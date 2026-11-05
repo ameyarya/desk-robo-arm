@@ -130,12 +130,12 @@ class LinkTest(unittest.TestCase):
         self.assertIsNone(s['error'])
         r.control.set_armed(True)   # can arm again
 
-    def test_stock_firmware_is_recognised(self):
+    def test_acks_without_replies_are_recognised(self):
         r = Rig()
         r.bridge.mode = 'stock'
         r.pings(arm_server.LOST_AFTER)
         s = r.control.status()
-        self.assertEqual(s['link']['state'], 'stock')
+        self.assertEqual(s['link']['state'], 'silent')
         self.assertIn('off and on', s['problem'])
 
     def test_arming_refused_with_the_reason_until_connected(self):
@@ -146,6 +146,26 @@ class LinkTest(unittest.TestCase):
         self.assertTrue(r.control.status()['link']['bridge'])
         r.connect_ok = True
         r.step(arm_server.RECONNECT_S + 0.01)
+        r.control.set_armed(True)
+
+    def test_unplugged_bridge_is_reopened(self):
+        r = Rig().armed()
+        r.control.lease_until = r.clock.t + 60
+        resets = []
+        r.control.connect.reset = lambda: resets.append(1)
+        unplugged = FakeBridge()
+        unplugged.send = lambda mac, msg: (_ for _ in ()).throw(OSError('device disconnected'))
+        r.control.bridge = r.control.robot.bridge = unplugged
+        r.pings(arm_server.LOST_AFTER)
+        s = r.control.status()
+        self.assertFalse(s['armed'])
+        self.assertEqual(s['link']['state'], 'connecting')
+        self.assertFalse(s['link']['bridge'])
+        self.assertEqual(resets, [1])
+        r.step(arm_server.RECONNECT_S + 0.01)   # plugged back in: connect() works again
+        s = r.control.status()
+        self.assertEqual(s['link']['state'], 'ok')
+        self.assertTrue(s['link']['bridge'])
         r.control.set_armed(True)
 
     def test_ping_reports_health(self):

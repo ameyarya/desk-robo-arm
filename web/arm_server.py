@@ -257,26 +257,42 @@ class ArmControl:
                 self.link.update(state='ok', misses=0, why=None, version=reply.get('version'),
                                  rtt_ms=round((time.monotonic() - t) * 1000),
                                  health={k: reply.get(k) for k in
-                                         ('up_s', 'errors', 'failsafe', 'last_error', 'crash')})
+                                         ('up_s', 'errors', 'failsafe', 'last_error', 'crash', 'mem')})
                 if self.error and self.error.startswith('arm lost'):
                     self.error = None
                 return
             self.link['misses'] += 1
             self.link['why'] = why
             if self.link['misses'] >= LOST_AFTER and self.link['state'] == 'ok':
-                self.link['state'] = 'stock' if why == 'acked but no reply' else 'lost'
+                # acks without replies: our firmware isn't running. If it replied earlier
+                # this session it hung or crashed; otherwise it may be the stock firmware.
+                self.link['state'] = 'silent' if why == 'acked but no reply' else 'lost'
                 if self.armed or self.holds:
                     self._stop_locked('arm lost')
                 self.running = {}   # the arm's own failsafe has stopped it by now
                 self.error = 'arm lost: ' + self._link_problem()
             if why and why.startswith('bridge:'):
                 self.link['bridge'] = False
+                if self.link['misses'] >= LOST_AFTER:
+                    self._drop_bridge_locked()
+
+    def _drop_bridge_locked(self):
+        """Forget a failed bridge (unplugged, or its port died) so the worker reopens it."""
+        self.robot = self.bridge = None
+        self.running = {}
+        self.link.update(state='connecting', bridge=False, why='bridge board lost; reconnecting')
+        reset = getattr(self.connect, 'reset', None)
+        if reset:
+            try:
+                reset()
+            except Exception:
+                pass
 
     def _link_problem(self):
         state = self.link['state']
-        if state == 'stock':
-            return ('the arm answers the radio but not our firmware: it is probably running the stock '
-                    'CyberBrick firmware after a crash. Switch the arm off and on.')
+        if state == 'silent':
+            return ('the arm acknowledges the radio but its firmware has stopped replying (hung, or '
+                    'crashed into the stock CyberBrick firmware). Switch the arm off and on.')
         if state == 'lost':
             return f"the arm stopped answering ({self.link['why']}): is it switched on?"
         if state == 'connecting':
@@ -302,7 +318,10 @@ def make_connect(port, name, mac):
 
     def connect():
         if state['bridge'] is None:
-            state['bridge'] = Bridge(port)
+            try:
+                state['bridge'] = Bridge(port)
+            except Exception as error:
+                raise OSError(f'bridge board not found on USB ({error})') from None
         bridge = state['bridge']
         found = bridge.scan(1.0)
         for robot_mac, info in found.items():
@@ -314,6 +333,12 @@ def make_connect(port, name, mac):
         raise BridgeError(f'no robot named {name!r} answered (is it on? if it was just restarted, give it 5 s)'
                           + (f'; saw {sorted(found)}' if found else ''))
 
+    def reset():
+        bridge, state['bridge'] = state['bridge'], None
+        if bridge is not None:
+            bridge.close()
+
+    connect.reset = reset
     return connect
 
 
@@ -441,9 +466,15 @@ def main():
     parser.add_argument('--usb', help='bridge board serial port (default: find it)')
     parser.add_argument('--robot', default='arm', help="the arm's name on the radio (cbb_config.json)")
     parser.add_argument('--mac', help="the arm's radio MAC, instead of finding it by name")
+    parser.add_argument('--simulate', action='store_true', help='no hardware: a simulated arm (for trying the page)')
     args = parser.parse_args()
 
-    control = ArmControl(make_connect(args.usb, args.robot, args.mac))
+    if args.simulate:
+        from sim import sim_connect
+        connect = sim_connect()
+    else:
+        connect = make_connect(args.usb, args.robot, args.mac)
+    control = ArmControl(connect)
     threading.Thread(target=control.run, daemon=True).start()
     server = QuietServer((args.bind, args.port), make_handler(control, dashboard_password()))
     mdns = None
@@ -453,7 +484,7 @@ def main():
         print(f'Robo Arm on http://{args.name}.local:{args.port}/ ({ip}) and http://localhost:{args.port}/'
               f'  (LAN login password in web/{PASSWORD_FILE.name})', flush=True)
     else:
-        print(f'Robo Arm on http://localhost:{args.port}/', flush=True)
+        print(f'Robo Arm on http://localhost:{args.port}/' + ('  (SIMULATED arm)' if args.simulate else ''), flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

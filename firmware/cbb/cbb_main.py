@@ -9,6 +9,7 @@
 # Role comes from /cbb_config.json, falling back to the shield's role pin
 # (pin 10 reads high on a bare board, low on a receiver shield).
 
+import gc
 import sys
 import time
 import ujson
@@ -20,7 +21,7 @@ CONFIG_PATH = "/cbb_config.json"
 CRASH_PATH = "/cbb_crash.txt"
 BROADCAST = b"\xff" * 6
 CHANNEL = 1
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 
 def load_config():
@@ -281,7 +282,9 @@ def run_receiver(cfg):
                    "version": VERSION, "moving": len(act.moving),
                    "up_s": time.ticks_diff(time.ticks_ms(), boot_ms) // 1000,
                    "errors": health["errors"], "failsafe": health["failsafe"],
-                   "last_error": health["last_error"], "crash": health["crash"]})
+                   "last_error": health["last_error"], "crash": health["crash"],
+                   "mem": gc.mem_free()})
+            gc.collect()
         elif op == "ka":
             pass
         elif op == "batch":
