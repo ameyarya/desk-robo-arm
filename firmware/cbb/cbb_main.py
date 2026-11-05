@@ -33,6 +33,16 @@ def load_config():
         return {}
 
 
+def fs_free():
+    """Free bytes on the board's flash filesystem."""
+    try:
+        import os
+        st = os.statvfs("/")
+        return st[0] * st[3]
+    except Exception:
+        return None
+
+
 def hexmac(b):
     return "".join("%02x" % x for x in b)
 
@@ -228,6 +238,13 @@ class FileWriter:
                         pass
                 os.rename(part, cmd["p"])
                 return {"op": op, "ok": True, "p": cmd["p"]}
+            if op == "fdel":  # remove a file and any staged copy of it
+                for path in (cmd["p"], cmd["p"] + ".part"):
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+                return {"op": op, "ok": True, "free": fs_free()}
             if op == "restore_stock":
                 os.rename("/boot_stock.py", "/boot.py")
             return {"op": op, "ok": True}
@@ -284,14 +301,14 @@ def run_receiver(cfg):
                    "up_s": time.ticks_diff(time.ticks_ms(), boot_ms) // 1000,
                    "errors": health["errors"], "failsafe": health["failsafe"],
                    "last_error": health["last_error"], "crash": health["crash"],
-                   "mem": gc.mem_free()})
+                   "mem": gc.mem_free(), "fs_free": fs_free()})
             gc.collect()
         elif op == "ka":
             pass
         elif op == "batch":
             for c in cmd["cmds"]:
                 apply(c)
-        elif op in ("fput", "fdone", "reset", "restore_stock"):
+        elif op in ("fput", "fdone", "fdel", "reset", "restore_stock"):
             act.stop_all()
             reply(files.handle(cmd))
             if op in ("reset", "restore_stock") or (op == "fdone" and cmd.get("reset")):

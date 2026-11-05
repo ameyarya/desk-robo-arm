@@ -9,3 +9,5 @@ backups/
 ota/
 # web app login password
 web/.dashboard-password
+# the arm's radio MAC, remembered by the web app
+web/.arm-mac

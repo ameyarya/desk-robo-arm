@@ -241,8 +241,9 @@ class LinkTest(unittest.TestCase):
             def close(self):
                 closed.append(self)
 
-        real = arm_server.Bridge
+        real, real_file = arm_server.Bridge, arm_server.ARM_MAC_FILE
         arm_server.Bridge = DeadThenAlive
+        arm_server.ARM_MAC_FILE = arm_server.Path(os.devnull + '.missing')   # no remembered arm
         try:
             connect = arm_server.make_connect(None, 'arm', None)
             with self.assertRaises(OSError) as e:
@@ -253,7 +254,7 @@ class LinkTest(unittest.TestCase):
             self.assertEqual(len(opened), 2)
             self.assertEqual(info['version'], '0.2.2')
         finally:
-            arm_server.Bridge = real
+            arm_server.Bridge, arm_server.ARM_MAC_FILE = real, real_file
 
     def test_arm_restart_and_failsafe_are_logged(self):
         r = Rig().arm()

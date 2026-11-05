@@ -420,6 +420,24 @@ class ArmControl:
                 'events': list(self.events)[-25:], 'max_speed': MAX_SPEED}
 
 
+ARM_MAC_FILE = ROOT / '.arm-mac'   # the arm's radio MAC from the last time it was found (gitignored)
+
+
+def _remembered_mac():
+    try:
+        return ARM_MAC_FILE.read_text().strip() or None
+    except OSError:
+        return None
+
+
+def _remember_mac(mac):
+    try:
+        if _remembered_mac() != mac:
+            ARM_MAC_FILE.write_text(mac + '\n')
+    except OSError:
+        pass
+
+
 def make_connect(port, name, mac):
     """Open the bridge once, then find the arm by MAC or by name over the radio."""
     state = {'bridge': None}
@@ -432,7 +450,16 @@ def make_connect(port, name, mac):
                 raise OSError(f'bridge board not found on USB ({error})') from None
         bridge = state['bridge']
         try:
-            found = bridge.scan(1.0)
+            # a direct ping is retried by the radio, a broadcast scan is not: try the arm we
+            # found last time first
+            known = mac or _remembered_mac()
+            found = {}
+            if known:
+                reply, _ = ping(bridge, known, timeout=0.5)
+                if reply is not None:
+                    found = {known: reply}
+            if not found:
+                found = bridge.scan(1.0)
         except (BridgeError, OSError, ValueError) as error:
             # the USB connection died (unplugged, or the board reset): reopen it next time
             reset()
@@ -442,6 +469,7 @@ def make_connect(port, name, mac):
                 if info.get('version') == 'loader':
                     raise BridgeError(f'{robot_mac} is still running the install loader; run tools/finish_install.py')
                 robot = Robot(bridge, robot_mac, keepalive=False)
+                _remember_mac(robot_mac)
                 return bridge, robot, {'mac': robot_mac, 'name': info.get('name'), 'version': info.get('version')}
         raise BridgeError(f'no robot named {name!r} answered (is it on? if it was just restarted, give it 5 s)'
                           + (f'; saw {sorted(found)}' if found else ''))

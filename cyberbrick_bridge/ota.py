@@ -19,24 +19,46 @@ def _wait_reply(bridge, mac, op, timeout=2.0):
     raise TimeoutError(f"robot {mac} did not answer {op}")
 
 
-def _request(bridge, mac, msg, retries=6):
-    for attempt in range(retries):
+def _request(bridge, mac, msg, give_up_s=15.0):
+    """Send until the robot confirms. The radio has dead spells of a few seconds now and then,
+    so this keeps trying (with a growing pause, at most 0.5 s) for up to `give_up_s`."""
+    end = time.time() + give_up_s
+    attempt = 0
+    while True:
         bridge.drain()
         if bridge.send(mac, msg):
             try:
-                r = _wait_reply(bridge, mac, msg["op"])
+                r = _wait_reply(bridge, mac, msg["op"], timeout=1.0)
                 if r.get("ok"):
                     return r
                 raise RuntimeError(f"{msg['op']} failed: {r}")
             except TimeoutError:
                 pass
-        time.sleep(0.1 * (attempt + 1))
-    raise TimeoutError(f"robot {mac} did not confirm {msg['op']}")
+        attempt += 1
+        if time.time() > end:
+            raise TimeoutError(f"robot {mac} did not confirm {msg['op']} in {give_up_s:.0f} s "
+                               f"({attempt} tries): is it switched on and in range?")
+        time.sleep(min(0.5, 0.05 * attempt))
 
 
 def push_file(bridge, mac, data, remote, reset=False, progress=print):
-    """Write `data` (bytes) to `remote` on the robot, verified by crc32."""
+    """Write `data` (bytes) to `remote` on the robot, verified by crc32.
+
+    If it fails partway, the staged copy (remote + ".part") is shrunk to 1 byte so it doesn't
+    eat the board's small flash (a full filesystem makes every later write stall the radio).
+    """
     mac = mac.lower().replace(":", "")
+    try:
+        _push(bridge, mac, data, remote, reset, progress)
+    except Exception:
+        try:
+            _request(bridge, mac, {"op": "fput", "p": remote, "o": 0, "h": "00"}, give_up_s=3.0)
+        except Exception:
+            pass
+        raise
+
+
+def _push(bridge, mac, data, remote, reset, progress):
     for off in range(0, len(data), CHUNK):
         chunk = data[off:off + CHUNK]
         _request(bridge, mac, {"op": "fput", "p": remote, "o": off,
