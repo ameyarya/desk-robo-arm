@@ -223,6 +223,37 @@ class LinkTest(unittest.TestCase):
         r.run(arm_server.RECONNECT_S + 0.5)
         self.assertEqual(r.control.status()['link']['state'], 'ok')
 
+    def test_usb_error_while_searching_reopens_the_bridge(self):
+        # the bridge dropped off USB while the server was still looking for the arm
+        opened, closed = [], []
+
+        class DeadThenAlive:
+            def __init__(self, port):
+                opened.append(self)
+                self.dead = len(opened) == 1
+
+            def scan(self, wait):
+                if self.dead:
+                    raise OSError('write failed: [Errno 6] Device not configured')
+                return {'aabbccddeeff': {'name': 'arm', 'version': '0.2.2'}}
+
+            def close(self):
+                closed.append(self)
+
+        real = arm_server.Bridge
+        arm_server.Bridge = DeadThenAlive
+        try:
+            connect = arm_server.make_connect(None, 'arm', None)
+            with self.assertRaises(OSError) as e:
+                connect()
+            self.assertIn('bridge board USB error', str(e.exception))
+            self.assertEqual(len(closed), 1)
+            bridge, robot, info = connect()       # reopened, and finds the arm
+            self.assertEqual(len(opened), 2)
+            self.assertEqual(info['version'], '0.2.2')
+        finally:
+            arm_server.Bridge = real
+
     def test_arm_restart_and_failsafe_are_logged(self):
         r = Rig().arm()
         r.run(0.3, hold=('base', 40))

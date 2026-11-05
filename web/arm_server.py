@@ -426,7 +426,12 @@ def make_connect(port, name, mac):
             except Exception as error:
                 raise OSError(f'bridge board not found on USB ({error})') from None
         bridge = state['bridge']
-        found = bridge.scan(1.0)
+        try:
+            found = bridge.scan(1.0)
+        except (BridgeError, OSError, ValueError) as error:
+            # the USB connection died (unplugged, or the board reset): reopen it next time
+            reset()
+            raise OSError(f'bridge board USB error ({error}); reopening it') from None
         for robot_mac, info in found.items():
             if (mac and robot_mac == mac) or (not mac and info.get('name') == name):
                 if info.get('version') == 'loader':
@@ -439,7 +444,10 @@ def make_connect(port, name, mac):
     def reset():
         bridge, state['bridge'] = state['bridge'], None
         if bridge is not None:
-            bridge.close()
+            try:
+                bridge.close()
+            except Exception:
+                pass
 
     connect.reset = reset
     return connect
