@@ -20,9 +20,18 @@ import espnow
 CONFIG_PATH = "/cbb_config.json"
 CRASH_PATH = "/cbb_crash.txt"
 MOTION_OPS = ("motor", "servo_speed", "servo_angle", "batch", "ka")
+WATCHDOG_MS = 3000   # the receiver resets itself if its loop stalls this long
+STUCK_SENDS = 8      # this many sends without a reported result: restart the ESP-NOW driver
+BOOT_REASONS = {}
+
+
+def _boot_reasons():
+    for name in ("PWRON_RESET", "HARD_RESET", "WDT_RESET", "DEEPSLEEP_RESET", "SOFT_RESET"):
+        if hasattr(machine, name):
+            BOOT_REASONS[getattr(machine, name)] = name.replace("_RESET", "").lower()
 BROADCAST = b"\xff" * 6
 CHANNEL = 1   # default Wi-Fi channel; cbb_config.json "channel" overrides it (both boards must match)
-VERSION = "0.2.3"
+VERSION = "0.2.4"
 
 
 def load_config():
@@ -283,7 +292,8 @@ def run_receiver(cfg):
     boot_ms = last_rx = time.ticks_ms()
     # reported in hello so the Mac can see trouble the board can't print without USB;
     # crash is the traceback boot.py saved when a previous run fell over
-    health = {"errors": 0, "failsafe": 0, "last_error": None, "crash": None}
+    health = {"errors": 0, "failsafe": 0, "last_error": None, "crash": None, "loop_max_ms": 0,
+              "radio_resets": 0, "boot": BOOT_REASONS.get(machine.reset_cause(), str(machine.reset_cause()))}
     try:
         with open(CRASH_PATH) as f:
             health["crash"] = f.read()[-160:]
@@ -291,7 +301,17 @@ def run_receiver(cfg):
         pass
 
     def reply(obj):
+        # Sends whose result the radio driver never reports pile up, and once too many are
+        # outstanding the next send waits forever and this loop (and the failsafe) freezes.
+        # So: never let them pile up; restart the ESP-NOW driver if they do.
         try:
+            st = e.stats()
+            if st[0] - st[1] > STUCK_SENDS:
+                health["radio_resets"] += 1
+                e.active(False)
+                e.active(True)
+                if bridge:
+                    e.add_peer(bridge)
             e.send(bridge, ujson.dumps(obj), False)
         except OSError:
             pass
@@ -314,7 +334,9 @@ def run_receiver(cfg):
                    "up_s": time.ticks_diff(time.ticks_ms(), boot_ms) // 1000,
                    "errors": health["errors"], "failsafe": health["failsafe"],
                    "last_error": health["last_error"], "crash": health["crash"],
-                   "mem": gc.mem_free(), "fs_free": fs_free()})
+                   "mem": gc.mem_free(), "fs_free": fs_free(), "boot": health["boot"],
+                   "loop_max_ms": health["loop_max_ms"], "radio_resets": health["radio_resets"]})
+            health["loop_max_ms"] = 0
             gc.collect()
         elif op == "ka":
             pass
@@ -328,9 +350,18 @@ def run_receiver(cfg):
                 time.sleep_ms(200)
                 machine.reset()
 
+    # The watchdog resets the board (which stops the motors) if this loop ever stalls.
+    wdt = machine.WDT(timeout=WATCHDOG_MS)
     # Nothing may leave this loop: an exception out of main() drops the board to
     # the stock firmware (boot.py's fallback), which the bridge can't talk to.
+    t_loop = time.ticks_ms()
     while True:
+        wdt.feed()
+        now = time.ticks_ms()
+        dt = time.ticks_diff(now, t_loop)
+        t_loop = now
+        if dt > health["loop_max_ms"]:
+            health["loop_max_ms"] = dt
         try:
             mac, msg = e.recv(20)
             if mac and mac == bridge:
@@ -360,6 +391,7 @@ def run_receiver(cfg):
 
 
 def main():
+    _boot_reasons()
     cfg = load_config()
     role = cfg.get("role")
     if role is None:

@@ -326,7 +326,8 @@ class ArmControl:
             if reply is not None:
                 was = self.link['state']
                 old = self.link.get('health') or {}
-                health = {k: reply.get(k) for k in ('up_s', 'errors', 'failsafe', 'last_error', 'crash', 'mem')}
+                health = {k: reply.get(k) for k in ('up_s', 'errors', 'failsafe', 'last_error', 'crash', 'mem',
+                                                    'boot', 'loop_max_ms', 'radio_resets')}
                 self.link.update(state='ok', misses=0, why=None, version=reply.get('version'),
                                  channel=reply.get('channel', self.link.get('channel')),
                                  rtt_ms=round((time.monotonic() - t) * 1000), health=health)
@@ -339,7 +340,17 @@ class ArmControl:
                                          'replies were lost)'))
                     self._stop_locked('link came back', quiet=True)   # make sure it is stopped
                 if old.get('up_s') is not None and (health.get('up_s') or 0) < old['up_s']:
-                    self._log('warn', f'the receiver restarted (uptime went from {old["up_s"]} s to {health.get("up_s")} s)')
+                    why = {'wdt': ': its watchdog reset it because its main loop had stalled for 3 s',
+                           'pwron': ': it was switched off and on', 'soft': ': a software reset',
+                           'hard': ': a hard reset'}.get(health.get('boot'), '')
+                    self._log('warn', f'the receiver restarted (uptime went from {old["up_s"]} s to '
+                                      f'{health.get("up_s")} s){why}')
+                if (health.get('radio_resets') or 0) > (old.get('radio_resets') or 0):
+                    self._log('warn', 'the receiver restarted its radio driver: sends were piling up '
+                                      f'unconfirmed ({health["radio_resets"]} time(s) since it started)')
+                if (health.get('loop_max_ms') or 0) > 500:
+                    self._log('warn', f"the receiver's main loop stalled for {health['loop_max_ms']} ms "
+                                      '(the failsafe runs in that loop)')
                 if (health.get('failsafe') or 0) > (old.get('failsafe') or 0) and old:
                     self._log('warn', 'the receiver\'s failsafe stopped the arm: it got no motion command for '
                                       f'{FAILSAFE_S:.1f} s while moving')
