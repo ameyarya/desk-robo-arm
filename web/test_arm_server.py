@@ -106,7 +106,7 @@ class RunawayTest(unittest.TestCase):
         r.bridge.ack_loss = 0
         r.run(0.3)
         self.assertIsNone(r.control.status()['stopping'])
-        self.assertTrue(any('STOP confirmed' in e for e in r.events()))
+        self.assertTrue(any('STOP confirmed by the receiver' in e for e in r.events()))
 
     def test_old_firmware_that_counts_pings_still_stops(self):
         # firmware before 0.2.2 refreshed its failsafe on any packet, pings included
@@ -139,7 +139,7 @@ class RunawayTest(unittest.TestCase):
         self.assertEqual(s['link']['state'], 'ok')
         self.assertIsNone(s['stopping'])            # a STOP got through after the link came back
         self.assertEqual(r.bridge.arm_moving(), {})
-        self.assertTrue(any('answering again' in e for e in r.events()))
+        self.assertTrue(any('receiver is answering again' in e for e in r.events()))
 
     def test_lease_lapse_stops_the_arm(self):
         r = Rig().arm()
@@ -180,7 +180,7 @@ class LinkTest(unittest.TestCase):
         s = r.control.status()
         self.assertEqual(s['link']['state'], 'lost')
         self.assertFalse(s['armed'])
-        self.assertIn('no radio acknowledgement', s['problem'])
+        self.assertIn('no radio acknowledgement from the receiver', s['problem'])
         self.assertIn('pings in a row', s['problem'])
         self.assertIn('switched off, out of battery, or out of range', s['problem'])
         with self.assertRaises(Refused) as e:
@@ -248,7 +248,7 @@ class LinkTest(unittest.TestCase):
             connect = arm_server.make_connect(None, 'arm', None)
             with self.assertRaises(OSError) as e:
                 connect()
-            self.assertIn('bridge board USB error', str(e.exception))
+            self.assertIn('transmitter USB error', str(e.exception))
             self.assertEqual(len(closed), 1)
             bridge, robot, info = connect()       # reopened, and finds the arm
             self.assertEqual(len(opened), 2)
@@ -281,10 +281,10 @@ class LinkTest(unittest.TestCase):
         r.run(0.8)
         r.bridge.mode = 'cbb'
         r.run(arm_server.PING_S + 0.1)
-        self.assertTrue(any("failsafe stopped it" in e for e in r.events()))
+        self.assertTrue(any("failsafe stopped the arm" in e for e in r.events()))
         r.bridge.started = r.clock.t                 # uptime goes back to 0: a restart
         r.run(arm_server.PING_S + 0.1)
-        self.assertTrue(any('the arm restarted' in e for e in r.events()))
+        self.assertTrue(any('the receiver restarted' in e for e in r.events()))
 
 
 class MotionTest(unittest.TestCase):
@@ -346,8 +346,8 @@ class MotionTest(unittest.TestCase):
         r.control.stop('STOP pressed')
         r.run(0.3)
         ev = r.events()
-        for expected in ('found the arm', 'armed by the page', 'elbow starts -30%', 'elbow stopped',
-                         'STOP: STOP pressed', 'STOP confirmed by the arm'):
+        for expected in ('found the receiver', 'armed by the page', 'elbow starts -30%', 'elbow stopped',
+                         'STOP: STOP pressed', 'STOP confirmed by the receiver'):
             self.assertTrue(any(expected in e for e in ev), f'{expected!r} not in {ev}')
         self.assertTrue(any('STOP: STOP pressed' in line for line in r.log))   # also in the log file
 

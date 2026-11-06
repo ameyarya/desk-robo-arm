@@ -86,8 +86,8 @@ kbd{font:11px ui-monospace,monospace;padding:1px 5px;border:1px solid var(--line
   <div class="brand"><h1>Robo Arm</h1><span class="sub">L-ONE · digital handle remote</span></div>
   <div class="pills">
     <span class="pill"><span class="dot" id="srv-dot"></span>Server <b id="srv-txt">…</b></span>
-    <span class="pill"><span class="dot" id="bridge-dot"></span>Bridge <b id="bridge-txt">…</b></span>
-    <span class="pill"><span class="dot" id="arm-dot"></span>Arm <b id="arm-txt">…</b></span>
+    <span class="pill"><span class="dot" id="bridge-dot"></span>Transmitter <b id="bridge-txt">…</b></span>
+    <span class="pill"><span class="dot" id="arm-dot"></span>Receiver <b id="arm-txt">…</b></span>
   </div>
 </header>
 <div id="banner" hidden></div>
@@ -99,7 +99,7 @@ kbd{font:11px ui-monospace,monospace;padding:1px 5px;border:1px solid var(--line
   </div>
   <div class="handle" id="remote">
     <div class="head">
-      <span class="led" id="led" title="Off: disarmed · green: connected · amber: armed · red: problem"></span>
+      <span class="led" id="led" title="Off: disarmed · green: receiver connected · amber: armed · red: problem"></span>
       <div class="well" id="stick-thumb"><div class="dead"></div><div class="knob"></div></div>
     </div>
     <div class="body">
@@ -250,28 +250,28 @@ function show(s){
   const wasArmed=armed;armed=!!s.armed;if(!armed){mine=false;if(wasArmed)stopLocal()}
   const L=s.link||{};linkOk=L.state==='ok';
   dot('srv-dot','ok');$('srv-txt').textContent='connected';
-  dot('bridge-dot',L.bridge?'ok':'bad');$('bridge-txt').textContent=L.bridge?'USB':'not found';
+  dot('bridge-dot',L.bridge?'ok':'bad');$('bridge-txt').textContent=L.bridge?'on USB':'not found';
   // one missed ping reply every so often is normal radio life; only flag a run of them
   const weak=(L.misses||0)>=2;
   dot('arm-dot',linkOk?(weak?'warn':'ok'):'bad');
   const Q=L.quality;const sig=Q&&Q.pings>=5?` · signal ${Q.replied_pct}%`:'';
   if(linkOk&&L.poor)dot('arm-dot','warn');
-  $('arm-txt').parentElement.title=Q?`Last ${Q.pings} pings: ${Q.acked_pct}% acknowledged by the arm, ${Q.replied_pct}% answered`:'';
+  $('arm-txt').parentElement.title=Q?`Last ${Q.pings} pings: ${Q.acked_pct}% acknowledged by the receiver, ${Q.replied_pct}% answered`:'';
   $('arm-txt').textContent=linkOk?`${L.name||'arm'} ${L.version||''}${sig}${weak?' (missed replies)':''}`:({silent:'replies lost',lost:'no radio contact',connecting:'searching…'}[L.state]||L.state);
   showArmed();
   const moving=Object.entries(s.running||{}).filter(([,v])=>v).map(([j,v])=>`${LABEL[j]||j} ${v>0?'+':''}${v}%`);
   if(s.stopping){
-    banner(`Stopping (${s.stopping}): STOP sent ${s.stop_attempts} time${s.stop_attempts===1?'':'s'}, waiting for the arm to confirm. `+
-      `Whatever happens to the radio, the arm stops by itself 0.6 s after its last motion command.`);$('banner').className='stopping'}
-  else if(s.problem)banner('Arm: '+s.problem);
-  else if(L.poor&&L.quality)banner(`Weak radio link: of the last ${L.quality.pings} pings, ${L.quality.acked_pct}% reached the arm and ${L.quality.replied_pct}% were answered. `+
-    'Moves may stutter or stop. USB 3 ports and hubs, and the Mac itself, jam 2.4 GHz radio: put the bridge on a USB extension cable, away from the Mac and any USB 3 hub, with a clear line to the arm.',true);
-  else if(L.health&&L.health.crash)banner(`The arm's firmware crashed before its last restart: ${L.health.crash}`,true);
+    banner(`Stopping (${s.stopping}): STOP sent ${s.stop_attempts} time${s.stop_attempts===1?'':'s'}, waiting for the receiver to confirm. `+
+      `Whatever happens to the radio, the receiver stops the arm by itself 0.6 s after its last motion command.`);$('banner').className='stopping'}
+  else if(s.problem)banner('Receiver: '+s.problem);
+  else if(L.poor&&L.quality)banner(`Weak radio link: of the last ${L.quality.pings} pings, ${L.quality.acked_pct}% reached the receiver and ${L.quality.replied_pct}% were answered. `+
+    'Moves may stutter or stop. USB 3 ports and hubs, and the Mac itself, jam 2.4 GHz radio: put the transmitter on a USB extension cable, away from the Mac and any USB 3 hub, with a clear line to the arm.',true);
+  else if(L.health&&L.health.crash)banner(`The receiver's firmware crashed before its last restart: ${L.health.crash}`,true);
   else banner('');
   if(Date.now()>noteUntil){
     let text,cls='';
-    if(s.stopping){text='Stopping: waiting for the arm to confirm STOP.';cls='bad'}
-    else if(!linkOk){text=s.problem||'Looking for the arm.';cls='warn'}
+    if(s.stopping){text='Stopping: waiting for the receiver to confirm STOP.';cls='bad'}
+    else if(!linkOk){text=s.problem||'Looking for the receiver.';cls='warn'}
     else if(s.error){text=s.error;cls='warn'}
     else if(armed)text=moving.length?'Armed. Moving: '+moving.join(', ')+'.':'Armed: push the thumbstick or the side stick.';
     else text=`Disarmed (${s.last}). Press ARM to move the arm.`;
