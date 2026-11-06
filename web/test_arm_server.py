@@ -229,7 +229,7 @@ class LinkTest(unittest.TestCase):
         opened, closed = [], []
 
         class DeadThenAlive:
-            def __init__(self, port):
+            def __init__(self, port, avoid=()):
                 opened.append(self)
                 self.dead = len(opened) == 1
 
@@ -299,6 +299,44 @@ class LinkTest(unittest.TestCase):
         b.receiver_channel = 99                      # nowhere: the search gives up, back where it began
         self.assertEqual(arm_server._search_channels(b, 'aabbccddeeff'), {})
         self.assertEqual(b.channel, 11)
+
+    def test_channel_search_follows_the_channel_the_receiver_reports(self):
+        # neighbouring channels overlap: a receiver on 11 is heard from 10 and 12, and its own
+        # channel's first pings are lost. The transmitter must end on 11, not where it heard it.
+        class Bleed(SimBridge):
+            def __init__(self):
+                super().__init__()
+                self.channel, self.lost = 11, 2
+
+            def ping(self):
+                return {'role': 'bridge', 'channel': self.channel}
+
+            def set_channel(self, ch):
+                self.channel = ch
+                return ch
+
+            def send(self, mac, msg):
+                if self.channel == 11 and self.lost:
+                    self.lost -= 1
+                    return False
+                if abs(self.channel - 11) > 1:
+                    return False
+                ok = super().send(mac, msg)
+                while not self.events.empty():       # the receiver reports its real channel
+                    ev = self.events.get_nowait()
+                    ev['msg']['channel'] = 11
+                    self.later.append(ev)
+                for ev in self.later:
+                    self.events.put(ev)
+                self.later = []
+                return ok
+
+        b = Bleed()
+        b.later = []
+        arm_server.CHANNEL_NOTES.clear()
+        self.assertIn('aabbccddeeff', arm_server._search_channels(b, 'aabbccddeeff'))
+        self.assertEqual(b.channel, 11)
+        self.assertEqual(arm_server.CHANNEL_NOTES, [])
 
     def test_arm_restart_and_failsafe_are_logged(self):
         r = Rig().arm()
@@ -473,6 +511,32 @@ class LanAuthTest(unittest.TestCase):
         self.assertEqual(res.status, 303)
         cookie = res.getheader('Set-Cookie').split(';')[0]
         self.assertEqual(self.request('POST', '/arm', b'{"armed": true}', {'Cookie': cookie}).status, 200)
+
+
+class PortTest(unittest.TestCase):
+    def test_find_port_never_opens_a_known_receiver(self):
+        from unittest import mock
+        from cyberbrick_bridge import bridge as bridge_mod
+
+        class Info:
+            def __init__(self, device, serial):
+                self.device, self.vid, self.serial_number = device, bridge_mod.ESPRESSIF_VID, serial
+        ports = [Info('/dev/a', 'AA:BB:CC:00:00:01'), Info('/dev/b', 'AA:BB:CC:00:00:02')]
+        opened = []
+
+        class FakeBridge:
+            def __init__(self, port):
+                opened.append(port)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+        with mock.patch.object(bridge_mod.list_ports, 'comports', return_value=ports), \
+                mock.patch.object(bridge_mod, 'Bridge', FakeBridge):
+            self.assertEqual(bridge_mod.find_port(avoid=['aabbcc000001']), '/dev/b')
+        self.assertEqual(opened, ['/dev/b'])
 
 
 if __name__ == '__main__':

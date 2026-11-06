@@ -500,17 +500,31 @@ def _search_channels(bridge, mac):
         return {}
     if here is None:
         return {}   # older transmitter firmware: can't change channel at runtime
-    for ch in [c for c in range(1, 14) if c != here] + [here]:
+    # its own channel first (a ping or two is often lost), then the rest
+    for ch in [here, here] + [c for c in range(1, 14) if c != here]:
         try:
             bridge.set_channel(ch)
         except Exception:
             return {}
         reply, _ = ping(bridge, mac, timeout=0.3)
         if reply is not None:
+            # Neighbouring channels overlap, so a receiver on 11 can be heard from 12. Go to the
+            # channel the receiver says it is on, not the one that happened to hear it.
+            told = reply.get('channel')
+            if isinstance(told, int) and 1 <= told <= 13 and told != ch:
+                try:
+                    bridge.set_channel(told)
+                    ch = told
+                except Exception:
+                    pass
             if ch != here:
                 CHANNEL_NOTES.append(f'the receiver answered on channel {ch}, not {here}: the transmitter moved to '
                                      f'channel {ch} (save it with tools/deploy.py PORT bridge --channel {ch})')
             return {mac: reply}
+    try:
+        bridge.set_channel(here)   # not found anywhere: back where it began
+    except Exception:
+        pass
     return {}
 
 
@@ -524,7 +538,7 @@ def make_connect(port, name, mac):
     def connect():
         if state['bridge'] is None:
             try:
-                state['bridge'] = Bridge(port)
+                state['bridge'] = Bridge(port, avoid=[mac or _remembered_mac()])  # never open the arm's own board
             except Exception as error:
                 raise OSError(f'transmitter not found on USB: plug it into the Mac ({error})') from None
         bridge = state['bridge']

@@ -15,9 +15,20 @@ class BridgeError(RuntimeError):
     pass
 
 
-def find_port():
-    """Return the first Espressif USB port whose board answers as a cbb bridge."""
-    ports = [p.device for p in list_ports.comports() if p.vid == ESPRESSIF_VID]
+def _usb_mac(port_info):
+    """A core board's USB serial number is its radio MAC ("20:6E:F1:..."): as 12 hex digits."""
+    return (port_info.serial_number or "").replace(":", "").lower()
+
+
+def find_port(avoid=()):
+    """Return the first Espressif USB port whose board answers as a cbb bridge.
+
+    `avoid`: radio MACs of boards not to touch. Trying a port means opening it, which can stop a
+    receiver plugged in for charging or updating; a board's USB serial number is its MAC, so the
+    known receivers are skipped without opening them."""
+    avoid = {m.replace(":", "").lower() for m in avoid if m}
+    ports = [p.device for p in list_ports.comports()
+             if p.vid == ESPRESSIF_VID and _usb_mac(p) not in avoid]
     for port in sorted(ports):
         try:
             with Bridge(port):
@@ -35,8 +46,8 @@ class Bridge:
     queued on `self.events`.
     """
 
-    def __init__(self, port=None, timeout=2.0, connect_timeout=5.0):
-        self.port = port or find_port()
+    def __init__(self, port=None, timeout=2.0, connect_timeout=5.0, avoid=()):
+        self.port = port or find_port(avoid)
         self.timeout = timeout
         s = serial.Serial()
         s.port = self.port
