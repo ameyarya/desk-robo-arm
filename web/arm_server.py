@@ -76,7 +76,19 @@ def ping(bridge, mac, timeout=PING_REPLY_S):
     A board that acks the packet but never replies is running other firmware (the stock
     CyberBrick firmware after a crash fallback).
     """
-    bridge.drain()
+    def is_reply(ev):
+        return ev.get('ev') == 'rx' and ev.get('from') == mac and ev['msg'].get('op') == 'ping'
+
+    # A reply to the previous ping that came in after its wait ended still shows the receiver is
+    # alive: count it rather than throw it away (slow replies were being reported as lost).
+    late = None
+    while True:
+        try:
+            ev = bridge.events.get_nowait()
+        except queue.Empty:
+            break
+        if is_reply(ev):
+            late = ev['msg']
     if not bridge.send(mac, {'op': 'ping'}):
         return None, 'no radio ack'
     end = time.monotonic() + timeout
@@ -85,8 +97,10 @@ def ping(bridge, mac, timeout=PING_REPLY_S):
             ev = bridge.events.get(timeout=max(0.0, end - time.monotonic()))
         except queue.Empty:
             break
-        if ev.get('ev') == 'rx' and ev.get('from') == mac and ev['msg'].get('op') == 'ping':
+        if is_reply(ev):
             return ev['msg'], None
+    if late is not None:
+        return late, None
     return None, 'acked but no reply'
 
 
