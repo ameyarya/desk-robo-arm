@@ -254,13 +254,18 @@ function show(s){
   // one missed ping reply every so often is normal radio life; only flag a run of them
   const weak=(L.misses||0)>=2;
   dot('arm-dot',linkOk?(weak?'warn':'ok'):'bad');
-  $('arm-txt').textContent=linkOk?`${L.name||'arm'} ${L.version||''}${weak?' (weak signal)':''}`:({silent:'replies lost',lost:'no radio contact',connecting:'searching…'}[L.state]||L.state);
+  const Q=L.quality;const sig=Q&&Q.pings>=5?` · signal ${Q.replied_pct}%`:'';
+  if(linkOk&&L.poor)dot('arm-dot','warn');
+  $('arm-txt').parentElement.title=Q?`Last ${Q.pings} pings: ${Q.acked_pct}% acknowledged by the arm, ${Q.replied_pct}% answered`:'';
+  $('arm-txt').textContent=linkOk?`${L.name||'arm'} ${L.version||''}${sig}${weak?' (missed replies)':''}`:({silent:'replies lost',lost:'no radio contact',connecting:'searching…'}[L.state]||L.state);
   showArmed();
   const moving=Object.entries(s.running||{}).filter(([,v])=>v).map(([j,v])=>`${LABEL[j]||j} ${v>0?'+':''}${v}%`);
   if(s.stopping){
     banner(`Stopping (${s.stopping}): STOP sent ${s.stop_attempts} time${s.stop_attempts===1?'':'s'}, waiting for the arm to confirm. `+
       `Whatever happens to the radio, the arm stops by itself 0.6 s after its last motion command.`);$('banner').className='stopping'}
   else if(s.problem)banner('Arm: '+s.problem);
+  else if(L.poor&&L.quality)banner(`Weak radio link: of the last ${L.quality.pings} pings, ${L.quality.acked_pct}% reached the arm and ${L.quality.replied_pct}% were answered. `+
+    'Moves may stutter or stop. USB 3 ports and hubs, and the Mac itself, jam 2.4 GHz radio: put the bridge on a USB extension cable, away from the Mac and any USB 3 hub, with a clear line to the arm.',true);
   else if(L.health&&L.health.crash)banner(`The arm's firmware crashed before its last restart: ${L.health.crash}`,true);
   else banner('');
   if(Date.now()>noteUntil){

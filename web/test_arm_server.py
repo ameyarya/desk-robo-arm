@@ -256,6 +256,24 @@ class LinkTest(unittest.TestCase):
         finally:
             arm_server.Bridge, arm_server.ARM_MAC_FILE = real, real_file
 
+    def test_signal_quality_is_measured_and_a_weak_link_is_flagged(self):
+        r = Rig()
+        r.run(arm_server.PING_S * 12)
+        q = r.control.status()['link']['quality']
+        self.assertEqual((q['acked_pct'], q['replied_pct']), (100, 100))
+        self.assertFalse(r.control.status()['link']['poor'])
+        r.bridge.mode = 'stock'                      # acks, no replies
+        r.run(arm_server.PING_S * 8)
+        s = r.control.status()
+        self.assertTrue(s['link']['poor'])
+        self.assertLess(s['link']['quality']['replied_pct'], arm_server.POOR_PCT)
+        self.assertTrue(any('weak radio link' in e and 'USB extension' in e for e in r.events()))
+        self.assertIn('acknowledged', s['problem'])  # the lost-link message quotes the numbers
+        r.bridge.mode = 'cbb'
+        r.run(arm_server.PING_S * 30)
+        self.assertFalse(r.control.status()['link']['poor'])
+        self.assertTrue(any('radio link good again' in e for e in r.events()))
+
     def test_arm_restart_and_failsafe_are_logged(self):
         r = Rig().arm()
         r.run(0.3, hold=('base', 40))

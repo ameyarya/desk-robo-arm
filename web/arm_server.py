@@ -53,6 +53,10 @@ RETRY_S = 0.1           # after a stop-a-joint command the arm didn't ack, try a
 RENEW_S = 0.2           # re-send a moving joint's speed this often (the arm's failsafe is 0.6 s)
 STOP_RETRY_S = 0.15     # re-send an unacknowledged STOP this often
 FAILSAFE_S = 0.6        # the arm firmware's failsafe (failsafe_ms in its cbb_config.json)
+QUALITY_PINGS = 30      # signal quality is measured over this many pings
+POOR_PCT = 80           # below this share of pings answered, the link counts as weak
+PLACEMENT_TIP = ('USB 3 ports and hubs, and the Mac itself, jam 2.4 GHz radio: put the bridge on a USB '
+                 'extension cable, away from the Mac and any USB 3 hub, with a clear line to the arm.')
 LOGIN_PAGE = '''<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>Robo Arm</title><style>:root{color-scheme:dark}body{margin:0;min-height:100vh;display:grid;place-items:center;
 background:#10151d;color:#edf2fa;font-family:system-ui;padding:16px}form{background:#19212d;border:1px solid #2c3748;
@@ -134,6 +138,8 @@ class ArmControl:
         self.next_ping = 0.0
         self.next_connect = 0.0
         self.events = collections.deque(maxlen=60)
+        self.pings = collections.deque(maxlen=QUALITY_PINGS)   # (acked, replied) per ping
+        self.poor = False
         self._log('info', 'server started; looking for the bridge board and the arm')
 
     # -- page requests (fast, never touch the radio) --------------------------
@@ -311,6 +317,8 @@ class ArmControl:
             reply, why = None, f'bridge board error: {error}'
         with self.lock:
             now = self.clock()
+            self.pings.append((reply is not None or why == 'acked but no reply', reply is not None))
+            self._quality_locked()
             if reply is not None:
                 was = self.link['state']
                 old = self.link.get('health') or {}
@@ -349,6 +357,25 @@ class ArmControl:
                 if self.link['misses'] >= LOST_AFTER:
                     self._drop_bridge_locked()
 
+    def _quality(self):
+        n = len(self.pings)
+        if not n:
+            return None
+        return {'pings': n, 'acked_pct': round(100 * sum(a for a, _ in self.pings) / n),
+                'replied_pct': round(100 * sum(r for _, r in self.pings) / n)}
+
+    def _quality_locked(self):
+        q = self._quality()
+        if not q or q['pings'] < 10:
+            return
+        poor = q['replied_pct'] < POOR_PCT
+        if poor and not self.poor:
+            self._log('warn', f"weak radio link: of the last {q['pings']} pings {q['acked_pct']}% were "
+                              f"acknowledged and {q['replied_pct']}% answered. " + PLACEMENT_TIP)
+        elif self.poor and q['replied_pct'] >= POOR_PCT + 10:
+            self._log('info', f"radio link good again ({q['replied_pct']}% of the last {q['pings']} pings answered)")
+        self.poor = poor if poor or q['replied_pct'] >= POOR_PCT + 10 else self.poor
+
     def _drop_bridge_locked(self):
         """Forget a failed bridge (unplugged, or its port died) so the worker reopens it."""
         self._log('error', 'the bridge board stopped responding on USB (unplugged?); reconnecting')
@@ -365,6 +392,12 @@ class ArmControl:
             except Exception:
                 pass
 
+    def _quality_text(self):
+        q = self._quality()
+        if not q:
+            return ''
+        return f"Signal over the last {q['pings']} pings: {q['acked_pct']}% acknowledged, {q['replied_pct']}% answered. "
+
     def _ago(self):
         if self.last_reply is None:
             return 'no reply yet'
@@ -376,11 +409,13 @@ class ArmControl:
             return ("the arm acknowledges the radio (so it is powered and hears the Mac), but none of its "
                     f"replies arrived for {self.link['misses']} pings in a row ({self._ago()}). Either its "
                     "replies are lost on the way back (weak signal: low battery, distance, or the bridge's "
-                    "position), or its firmware has frozen. Moving is blocked until it replies again; if "
-                    "this lasts, move the bridge closer or charge the battery, then switch the arm off and on.")
+                    "position), or its firmware has frozen. Moving is blocked until it replies again. "
+                    + self._quality_text() + PLACEMENT_TIP + " If its uptime restarts when it comes back, "
+                    "it had frozen: switch it off and on.")
         if state == 'lost':
             return (f"no radio acknowledgement from the arm for {self.link['misses']} pings in a row "
-                    f"({self._ago()}). It is switched off, out of battery, or out of range.")
+                    f"({self._ago()}). It is switched off, out of battery, or out of range. "
+                    + self._quality_text())
         if state == 'connecting':
             return self.link['why'] or 'looking for the bridge board and the arm'
         return None
@@ -411,6 +446,8 @@ class ArmControl:
     def _status_locked(self):
         link = dict(self.link)
         link['last_reply_s'] = None if self.last_reply is None else round(self.clock() - self.last_reply, 1)
+        link['quality'] = self._quality()
+        link['poor'] = self.poor
         moving = {j: s for j, s in self.sent.items() if s}
         return {'armed': self.armed, 'joints': self.joints,
                 'running': moving,               # what the arm may be doing right now
