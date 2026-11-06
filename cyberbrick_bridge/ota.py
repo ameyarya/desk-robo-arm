@@ -41,7 +41,7 @@ def _request(bridge, mac, msg, give_up_s=15.0):
         time.sleep(min(0.5, 0.05 * attempt))
 
 
-def push_file(bridge, mac, data, remote, reset=False, progress=print):
+def push_file(bridge, mac, data, remote, reset=False, progress=print, pause=0.0):
     """Write `data` (bytes) to `remote` on the robot, verified by crc32.
 
     If it fails partway, the staged copy (remote + ".part") is shrunk to 1 byte so it doesn't
@@ -49,7 +49,7 @@ def push_file(bridge, mac, data, remote, reset=False, progress=print):
     """
     mac = mac.lower().replace(":", "")
     try:
-        _push(bridge, mac, data, remote, reset, progress)
+        _push(bridge, mac, data, remote, reset, progress, pause)
     except Exception:
         try:
             _request(bridge, mac, {"op": "fput", "p": remote, "o": 0, "h": "00"}, give_up_s=3.0)
@@ -58,11 +58,13 @@ def push_file(bridge, mac, data, remote, reset=False, progress=print):
         raise
 
 
-def _push(bridge, mac, data, remote, reset, progress):
+def _push(bridge, mac, data, remote, reset, progress, pause):
     for off in range(0, len(data), CHUNK):
         chunk = data[off:off + CHUNK]
         _request(bridge, mac, {"op": "fput", "p": remote, "o": off,
                                "h": binascii.hexlify(chunk).decode()})
+        if pause:
+            time.sleep(pause)   # older firmware writes each chunk to flash: let it finish
         if progress and (off // CHUNK) % 20 == 0:
             progress(f"{remote}: {off + len(chunk)}/{len(data)} bytes")
     crc = zlib.crc32(data) & 0xFFFFFFFF

@@ -202,10 +202,16 @@ class Actuators:
 class FileWriter:
     """Over-the-air file updates, so a robot never needs USB after install.
 
-    fput {p, o, h}: write hex chunk h at offset o of p (staged as p + ".part")
-    fdone {p, n, crc}: check size and crc32 of the staged file, then move it
-    into place. restore_stock puts the stock CyberBrick boot.py back.
+    fput {p, o, h}: add hex chunk h at offset o of p. Chunks are collected in memory, because
+    appending to a flash file rewrites a 4 KB block each time and the radio misses packets
+    while that happens; the file is written once, by fdone.
+    fdone {p, n, crc}: check size and crc32, write the file (staged as p + ".part") and move it
+    into place. fdel {p} removes a file. restore_stock puts the stock CyberBrick boot.py back.
     """
+
+    def __init__(self):
+        self.path = None
+        self.buf = bytearray()
 
     def handle(self, cmd):
         import os
@@ -214,29 +220,33 @@ class FileWriter:
         op = cmd["op"]
         try:
             if op == "fput":
-                part = cmd["p"] + ".part"
                 data, off = ubinascii.unhexlify(cmd["h"]), cmd["o"]
-                size = os.stat(part)[6] if off else 0
-                if size == off:
-                    with open(part, "ab" if off else "wb") as f:
-                        f.write(data)
-                elif size != off + len(data):  # equal: a retried chunk already written
-                    return {"op": op, "ok": False, "err": "offset", "o": off}
+                if off == 0:
+                    self.path, self.buf = cmd["p"], bytearray()
+                if self.path != cmd["p"]:
+                    return {"op": op, "ok": False, "err": "start at offset 0", "o": off}
+                if len(self.buf) == off:
+                    self.buf.extend(data)
+                elif len(self.buf) != off + len(data):  # equal: a retried chunk already added
+                    return {"op": op, "ok": False, "err": "offset", "o": off, "have": len(self.buf)}
                 return {"op": op, "ok": True, "o": off}
             if op == "fdone":
-                part = cmd["p"] + ".part"
-                with open(part, "rb") as f:
-                    data = f.read()
-                crc = ubinascii.crc32(data) & 0xFFFFFFFF
-                if len(data) != cmd["n"] or crc != cmd["crc"]:
-                    return {"op": op, "ok": False, "err": "check", "n": len(data), "crc": crc}
+                if self.path != cmd["p"]:
+                    return {"op": op, "ok": False, "err": "no upload of %s in progress" % cmd["p"]}
+                crc = ubinascii.crc32(self.buf) & 0xFFFFFFFF
+                if len(self.buf) != cmd["n"] or crc != cmd["crc"]:
+                    return {"op": op, "ok": False, "err": "check", "n": len(self.buf), "crc": crc}
                 d = cmd["p"].rsplit("/", 1)[0]
                 if d:
                     try:
                         os.mkdir(d)
                     except OSError:
                         pass
+                part = cmd["p"] + ".part"
+                with open(part, "wb") as f:
+                    f.write(self.buf)
                 os.rename(part, cmd["p"])
+                self.path, self.buf = None, bytearray()
                 return {"op": op, "ok": True, "p": cmd["p"]}
             if op == "fdel":  # remove a file and any staged copy of it
                 for path in (cmd["p"], cmd["p"] + ".part"):

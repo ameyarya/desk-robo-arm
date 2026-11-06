@@ -15,6 +15,8 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from cyberbrick_bridge import Bridge, ota  # noqa: E402
+sys.path.insert(0, os.path.join(ROOT, 'tools'))
+from make_ota_config import minify  # noqa: E402
 
 FW = os.path.join(ROOT, 'firmware')
 
@@ -48,6 +50,56 @@ def wait_for(bridge, name, until, mac=None):
     return None, None
 
 
+PART_BYTES = 1000   # older firmware stalls its radio when one file grows past a few KB
+
+
+def buffers_in_memory(version):
+    """Firmware 0.2.2+ collects an upload in memory and writes it once."""
+    try:
+        return tuple(int(x) for x in version.split('.')) >= (0, 2, 2)
+    except (AttributeError, ValueError):
+        return False
+
+
+def split(src):
+    """Minified firmware in pieces of at most PART_BYTES, cut at line ends."""
+    parts, cur = [], b''
+    for line in minify(src).splitlines(keepends=True):
+        if cur and len(cur) + len(line) > PART_BYTES:
+            parts.append(cur)
+            cur = b''
+        cur += line
+    if cur:
+        parts.append(cur)
+    return parts
+
+
+def stub(n):
+    """The cbb_main.py that runs the parts, in order, as one module."""
+    return (
+        "# cbb firmware, sent over the radio in %d small files (cbb_p0.py ...)\n"
+        "def _load():\n"
+        "    s = ''\n"
+        "    for i in range(%d):\n"
+        "        with open('/cbb/cbb_p%%d.py' %% i) as f:\n"
+        "            s += f.read()\n"
+        "    return s\n"
+        "exec(_load(), globals())\n" % (n, n)).encode()
+
+
+def push_split(bridge, mac, src):
+    """For robots whose firmware writes each chunk to flash as it arrives (before 0.2.2): send
+    the firmware as small files, pausing after each chunk, then a stub cbb_main.py that loads
+    them. The stub goes last, so until then the robot keeps running its current firmware."""
+    parts = split(src)
+    print(f'older firmware on the robot: sending {len(parts)} parts of at most {PART_BYTES} bytes', flush=True)
+    for i, part in enumerate(parts):
+        ota.push_file(bridge, mac, part, f'/cbb/cbb_p{i}.py', progress=None, pause=0.15)
+        print(f'  part {i + 1}/{len(parts)} ({len(part)} bytes) confirmed', flush=True)
+    ota.push_file(bridge, mac, stub(len(parts)), '/cbb/cbb_main.py', progress=None, pause=0.15)
+    bridge.send(mac, {'op': 'reset'})
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--port')
@@ -67,8 +119,11 @@ def main():
         if info.get('version') == target:
             print(f'already on {target}')
             return
-        ota.push_file(b, mac, open(main_py, 'rb').read(), '/cbb/cbb_main.py')
-        ota.push_file(b, mac, open(os.path.join(FW, 'boot.py'), 'rb').read(), '/boot.py', reset=True)
+        if buffers_in_memory(info.get('version')):
+            ota.push_file(b, mac, open(main_py, 'rb').read(), '/cbb/cbb_main.py')
+            ota.push_file(b, mac, open(os.path.join(FW, 'boot.py'), 'rb').read(), '/boot.py', reset=True)
+        else:
+            push_split(b, mac, open(main_py, 'rb').read())
         print('pushed; waiting for the reboot', flush=True)
         time.sleep(4)
         mac2, info = wait_for(b, a.name, time.time() + 30, mac)
