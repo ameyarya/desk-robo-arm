@@ -51,6 +51,7 @@ def main():
     ap.add_argument("--name", default="robot")
     ap.add_argument("--bridge", help="bridge board MAC (receiver only)")
     ap.add_argument("--failsafe-ms", type=int, default=600)
+    ap.add_argument("--channel", type=int, default=1, help="Wi-Fi channel (1-13); both boards must match")
     a = ap.parse_args()
 
     b = Board(a.port)
@@ -81,7 +82,7 @@ def main():
         # boot.py's crash fallback runs this; the stock app files stay on the board
         b.put(os.path.join(ROOT, "backups", mac, "boot.py"), "/boot_stock.py")
 
-    cfg = {"role": a.role}
+    cfg = {"role": a.role, "channel": a.channel}
     if a.role == "receiver":
         cfg.update(name=a.name, bridge=a.bridge.lower().replace(":", ""),
                    failsafe_ms=a.failsafe_ms)

@@ -93,6 +93,21 @@ Joint-to-port mapping is `ARM_JOINTS` in `cyberbrick_bridge/robot.py`. Use
 `cbb jog` to check which port drives which joint. For a different robot, pass your
 own `joints={...}` to `Robot`.
 
+## Radio channel
+
+The transmitter and the receiver talk ESP-NOW on one Wi-Fi channel, which both must share. It's
+set by `"channel"` in each board's `cbb_config.json` (firmware 0.2.3+; the default is 1). Pick the
+quietest channel near the boards: channel 1 here shared the air with three strong home networks,
+and the link dropped for minutes at a time; channel 11 is quiet.
+
+```bash
+tools/update_robot.py --mac <receiver-mac> --channel 11   # receiver first, over the radio (resumable)
+tools/deploy.py <port> bridge --channel 11                # then the transmitter, over USB
+```
+
+If they ever end up on different channels, the web app searches all channels for the receiver,
+follows it, and logs which channel it found it on.
+
 ## Web app
 
 ```bash

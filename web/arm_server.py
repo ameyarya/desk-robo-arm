@@ -131,6 +131,7 @@ class ArmControl:
         self.stop_since = 0.0
         self.next_stop = 0.0
         self.link = {'state': 'connecting', 'bridge': False, 'mac': None, 'name': None, 'version': None,
+                     'channel': None,
                      'misses': 0, 'why': None, 'health': None, 'rtt_ms': None, 'last_reply_s': None}
         self.last_reply = None
         self.error = None
@@ -305,7 +306,10 @@ class ArmControl:
             self.link.update(state='ok', bridge=True, misses=0, why=None, **info)
             self.last_reply = self.clock()
             self.error = None
-            self._log('info', f"found the receiver '{info.get('name')}' ({info.get('mac')}), firmware {info.get('version')}")
+            while CHANNEL_NOTES:
+                self._log('warn', CHANNEL_NOTES.pop(0))
+            self._log('info', f"found the receiver '{info.get('name')}' ({info.get('mac')}), firmware {info.get('version')}"
+                              + (f", channel {info.get('channel')}" if info.get('channel') else ''))
             # whatever it was doing before this server started, make sure it is stopped
             self._stop_locked('server connected to the arm', quiet=True)
 
@@ -324,6 +328,7 @@ class ArmControl:
                 old = self.link.get('health') or {}
                 health = {k: reply.get(k) for k in ('up_s', 'errors', 'failsafe', 'last_error', 'crash', 'mem')}
                 self.link.update(state='ok', misses=0, why=None, version=reply.get('version'),
+                                 channel=reply.get('channel', self.link.get('channel')),
                                  rtt_ms=round((time.monotonic() - t) * 1000), health=health)
                 self.last_reply = now
                 if was != 'ok':
@@ -475,6 +480,32 @@ def _remember_mac(mac):
         pass
 
 
+def _search_channels(bridge, mac):
+    """The receiver isn't on the transmitter's channel: look for it on every channel (1-13) and
+    move the transmitter to wherever it answers. Needs transmitter firmware 0.2.3+."""
+    try:
+        here = bridge.ping().get('channel')
+    except Exception:
+        return {}
+    if here is None:
+        return {}   # older transmitter firmware: can't change channel at runtime
+    for ch in [c for c in range(1, 14) if c != here] + [here]:
+        try:
+            bridge.set_channel(ch)
+        except Exception:
+            return {}
+        reply, _ = ping(bridge, mac, timeout=0.3)
+        if reply is not None:
+            if ch != here:
+                CHANNEL_NOTES.append(f'the receiver answered on channel {ch}, not {here}: the transmitter moved to '
+                                     f'channel {ch} (save it with tools/deploy.py PORT bridge --channel {ch})')
+            return {mac: reply}
+    return {}
+
+
+CHANNEL_NOTES = []   # channel searches that found the receiver elsewhere, for the event log
+
+
 def make_connect(port, name, mac):
     """Open the transmitter once, then find the receiver by MAC or by name over the radio."""
     state = {'bridge': None}
@@ -497,6 +528,8 @@ def make_connect(port, name, mac):
                     found = {known: reply}
             if not found:
                 found = bridge.scan(1.0)
+            if not found and known:
+                found = _search_channels(bridge, known)
         except (BridgeError, OSError, ValueError) as error:
             # the USB connection died (unplugged, or the board reset): reopen it next time
             reset()
@@ -507,7 +540,8 @@ def make_connect(port, name, mac):
                     raise BridgeError(f'{robot_mac} is still running the install loader; run tools/finish_install.py')
                 robot = Robot(bridge, robot_mac, keepalive=False)
                 _remember_mac(robot_mac)
-                return bridge, robot, {'mac': robot_mac, 'name': info.get('name'), 'version': info.get('version')}
+                return bridge, robot, {'mac': robot_mac, 'name': info.get('name'), 'version': info.get('version'),
+                                       'channel': info.get('channel')}
         raise BridgeError(f'the transmitter is connected, but no receiver named {name!r} answered (is the arm switched on? it answers about 5 s after power-up)'
                           + (f'; saw {sorted(found)}' if found else ''))
 

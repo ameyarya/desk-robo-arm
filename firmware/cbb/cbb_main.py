@@ -21,8 +21,8 @@ CONFIG_PATH = "/cbb_config.json"
 CRASH_PATH = "/cbb_crash.txt"
 MOTION_OPS = ("motor", "servo_speed", "servo_angle", "batch", "ka")
 BROADCAST = b"\xff" * 6
-CHANNEL = 1
-VERSION = "0.2.2"
+CHANNEL = 1   # default Wi-Fi channel; cbb_config.json "channel" overrides it (both boards must match)
+VERSION = "0.2.3"
 
 
 def load_config():
@@ -68,14 +68,14 @@ class StatusLed:
         self.np.write()
 
 
-def radio():
+def radio(channel=CHANNEL):
     w = network.WLAN(network.STA_IF)
     w.active(True)
     try:
         w.disconnect()
     except OSError:
         pass
-    w.config(channel=CHANNEL)
+    w.config(channel=channel)
     try:
         w.config(pm=w.PM_NONE)  # no Wi-Fi power saving: it drops ESP-NOW packets
     except (AttributeError, ValueError, OSError):
@@ -94,7 +94,7 @@ def emit(obj):
 def run_bridge(cfg):
     import select
 
-    w, e = radio()
+    w, e = radio(cfg.get("channel", CHANNEL))
     e.add_peer(BROADCAST)
     peers = set()
     led = StatusLed()
@@ -110,8 +110,11 @@ def run_bridge(cfg):
         rid = req.get("id")
         op = req.get("op")
         if op == "ping":
-            emit({"id": rid, "ok": True, "role": "bridge",
+            emit({"id": rid, "ok": True, "role": "bridge", "channel": w.config("channel"),
                   "mac": hexmac(w.config("mac")), "version": VERSION})
+        elif op == "channel":  # switch radio channel now (the receiver must be on the same one)
+            w.config(channel=int(req["ch"]))
+            emit({"id": rid, "ok": True, "channel": w.config("channel")})
         elif op == "send":
             to = req["to"]
             mac = BROADCAST if to == "*" else unhexmac(to)
@@ -266,7 +269,7 @@ files = FileWriter()
 
 
 def run_receiver(cfg):
-    w, e = radio()
+    w, e = radio(cfg.get("channel", CHANNEL))
     name = cfg.get("name", "robot")
     bridge = cfg.get("bridge")
     bridge = unhexmac(bridge) if bridge else None
@@ -307,7 +310,7 @@ def run_receiver(cfg):
             led.set(*cmd["rgb"])
         elif op in ("hello", "ping"):
             reply({"op": op, "seq": cmd.get("seq"), "name": name,
-                   "version": VERSION, "moving": len(act.moving),
+                   "version": VERSION, "moving": len(act.moving), "channel": w.config("channel"),
                    "up_s": time.ticks_diff(time.ticks_ms(), boot_ms) // 1000,
                    "errors": health["errors"], "failsafe": health["failsafe"],
                    "last_error": health["last_error"], "crash": health["crash"],

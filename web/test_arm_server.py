@@ -274,6 +274,32 @@ class LinkTest(unittest.TestCase):
         self.assertFalse(r.control.status()['link']['poor'])
         self.assertTrue(any('radio link good again' in e for e in r.events()))
 
+    def test_receiver_on_another_channel_is_found_and_followed(self):
+        class OnChannel(SimBridge):
+            def __init__(self):
+                super().__init__()
+                self.channel, self.receiver_channel = 1, 11
+
+            def ping(self):
+                return {'role': 'bridge', 'channel': self.channel}
+
+            def set_channel(self, ch):
+                self.channel = ch
+                return ch
+
+            def send(self, mac, msg):
+                return self.channel == self.receiver_channel and super().send(mac, msg)
+
+        b = OnChannel()
+        arm_server.CHANNEL_NOTES.clear()
+        found = arm_server._search_channels(b, 'aabbccddeeff')
+        self.assertIn('aabbccddeeff', found)
+        self.assertEqual(b.channel, 11)
+        self.assertTrue(any('answered on channel 11, not 1' in n for n in arm_server.CHANNEL_NOTES))
+        b.receiver_channel = 99                      # nowhere: the search gives up, back where it began
+        self.assertEqual(arm_server._search_channels(b, 'aabbccddeeff'), {})
+        self.assertEqual(b.channel, 11)
+
     def test_arm_restart_and_failsafe_are_logged(self):
         r = Rig().arm()
         r.run(0.3, hold=('base', 40))

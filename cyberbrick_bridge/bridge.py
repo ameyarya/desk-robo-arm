@@ -113,6 +113,13 @@ class Bridge:
             raise BridgeError(f"unexpected reply {r}")
         return r
 
+    def set_channel(self, ch):
+        """Move the transmitter's radio to Wi-Fi channel `ch` now (not saved across restarts)."""
+        r = self.request("channel", ch=int(ch))
+        if not r.get("ok"):
+            raise BridgeError(f"transmitter refused channel {ch}: {r}")
+        return r["channel"]
+
     def send(self, to, msg):
         """Send a message to a robot (MAC hex) or "*" for all. Returns True on ack."""
         r = self.request("send", to=to, msg=msg)
