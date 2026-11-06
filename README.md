@@ -96,7 +96,7 @@ own `joints={...}` to `Robot`.
 ## Radio channel
 
 The transmitter and the receiver talk ESP-NOW on one Wi-Fi channel, which both must share. It's
-set by `"channel"` in each board's `cbb_config.json` (firmware 0.2.3+; the default is 1). Pick the
+set by `"channel"` in each board's `cbb_config.json` (firmware 0.2.3+; the default is 1). Receiver replies must fit one 250-byte radio packet; 0.2.5 trims them, older firmware went silent after ~100 s. Pick the
 quietest channel near the boards: channel 1 here shared the air with three strong home networks,
 and the link dropped for minutes at a time; channel 11 is quiet.
 

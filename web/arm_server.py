@@ -55,8 +55,7 @@ STOP_RETRY_S = 0.15     # re-send an unacknowledged STOP this often
 FAILSAFE_S = 0.6        # the arm firmware's failsafe (failsafe_ms in its cbb_config.json)
 QUALITY_PINGS = 30      # signal quality is measured over this many pings
 POOR_PCT = 80           # below this share of pings answered, the link counts as weak
-PLACEMENT_TIP = ('USB 3 ports and hubs, and the Mac itself, jam 2.4 GHz radio: put the transmitter on a USB '
-                 'extension cable, away from the Mac and any USB 3 hub, with a clear line to the arm.')
+PLACEMENT_TIP = 'Move the transmitter away from the Mac (USB extension cable).'
 LOGIN_PAGE = '''<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>Robo Arm</title><style>:root{color-scheme:dark}body{margin:0;min-height:100vh;display:grid;place-items:center;
 background:#10151d;color:#edf2fa;font-family:system-ui;padding:16px}form{background:#19212d;border:1px solid #2c3748;
@@ -141,7 +140,7 @@ class ArmControl:
         self.events = collections.deque(maxlen=60)
         self.pings = collections.deque(maxlen=QUALITY_PINGS)   # (acked, replied) per ping
         self.poor = False
-        self._log('info', 'server started; looking for the transmitter (USB) and the receiver in the arm (radio)')
+        self._log('info', 'server started')
 
     # -- page requests (fast, never touch the radio) --------------------------
 
@@ -264,7 +263,7 @@ class ArmControl:
             else:
                 self.renew_at[joint] = now + RETRY_S   # retry the 0 shortly
             if not acked and self.link['state'] == 'ok':
-                self.error = f'{joint}: the receiver did not acknowledge the command; retrying'
+                self.error = f'{joint}: no ack, retrying'
             elif acked and self.error and self.error.startswith(joint + ':'):
                 self.error = None
 
@@ -274,8 +273,7 @@ class ArmControl:
         with self.lock:
             if acked:
                 took = now - self.stop_since
-                self._log('info', f'STOP confirmed by the receiver ({self.stop_attempts} '
-                                  f'{"try" if self.stop_attempts == 1 else "tries"}, {took * 1000:.0f} ms)')
+                self._log('info', 'STOP confirmed' + (f' ({self.stop_attempts} tries)' if self.stop_attempts > 1 else ''))
                 self.stop_pending = None
                 self.sent.clear()
                 self.renew_at.clear()
@@ -284,10 +282,9 @@ class ArmControl:
             else:
                 self.next_stop = now + (STOP_RETRY_S if self.stop_attempts < 15 else 1.0)
                 if self.stop_attempts in (1, 5) or self.stop_attempts % 25 == 0:
-                    self._log('warn', f'STOP not acknowledged yet (try {self.stop_attempts}); retrying. '
-                                      f'The receiver stops the arm on its own {FAILSAFE_S:.1f} s after the last motion command.')
+                    self._log('warn', 'STOP not confirmed yet, retrying')
                 if self.link['state'] == 'ok':
-                    self.error = f'STOP sent, waiting for the receiver to confirm (try {self.stop_attempts})'
+                    self.error = 'STOP sent, waiting for confirmation'
 
     def _connect(self):
         try:
@@ -308,8 +305,8 @@ class ArmControl:
             self.error = None
             while CHANNEL_NOTES:
                 self._log('warn', CHANNEL_NOTES.pop(0))
-            self._log('info', f"found the receiver '{info.get('name')}' ({info.get('mac')}), firmware {info.get('version')}"
-                              + (f", channel {info.get('channel')}" if info.get('channel') else ''))
+            self._log('info', f"receiver connected (firmware {info.get('version')}"
+                              + (f", channel {info.get('channel')})" if info.get('channel') else ')'))
             # whatever it was doing before this server started, make sure it is stopped
             self._stop_locked('server connected to the arm', quiet=True)
 
@@ -334,30 +331,22 @@ class ArmControl:
                 self.last_reply = now
                 if was != 'ok':
                     restarted = old.get('up_s') is not None and (health.get('up_s') or 0) < old['up_s']
-                    self._log('info', f'the receiver is answering again (firmware {reply.get("version")}, '
-                                      f'up {health.get("up_s")} s: '
-                                      + ('it restarted)' if restarted else 'it kept running, so only its '
-                                         'replies were lost)'))
+                    self._log('info', 'receiver back' + (' (it had restarted)' if restarted else ''))
                     self._stop_locked('link came back', quiet=True)   # make sure it is stopped
                 if old.get('up_s') is not None and (health.get('up_s') or 0) < old['up_s']:
-                    why = {'wdt': ': its watchdog reset it because its main loop had stalled for 3 s',
-                           'pwron': ': it was switched off and on', 'soft': ': a software reset',
-                           'hard': ': a hard reset'}.get(health.get('boot'), '')
-                    self._log('warn', f'the receiver restarted (uptime went from {old["up_s"]} s to '
-                                      f'{health.get("up_s")} s){why}')
+                    why = {'wdt': ' (watchdog)', 'pwron': ' (power cycle)', 'soft': ' (software reset)',
+                           'hard': ' (hard reset)'}.get(health.get('boot'), '')
+                    self._log('warn', f'receiver restarted{why}')
                 if (health.get('radio_resets') or 0) > (old.get('radio_resets') or 0):
-                    self._log('warn', 'the receiver restarted its radio driver: sends were piling up '
-                                      f'unconfirmed ({health["radio_resets"]} time(s) since it started)')
+                    self._log('warn', 'receiver reset its radio')
                 if (health.get('loop_max_ms') or 0) > 500:
-                    self._log('warn', f"the receiver's main loop stalled for {health['loop_max_ms']} ms "
-                                      '(the failsafe runs in that loop)')
+                    self._log('warn', f"receiver loop stalled {health['loop_max_ms']} ms")
                 if (health.get('failsafe') or 0) > (old.get('failsafe') or 0) and old:
-                    self._log('warn', 'the receiver\'s failsafe stopped the arm: it got no motion command for '
-                                      f'{FAILSAFE_S:.1f} s while moving')
+                    self._log('warn', 'receiver failsafe stopped the arm')
                 if (health.get('errors') or 0) > (old.get('errors') or 0) and old:
-                    self._log('warn', f'the receiver reported a firmware error: {health.get("last_error")}')
+                    self._log('warn', f'receiver error: {health.get("last_error")}')
                 if health.get('crash') and health.get('crash') != old.get('crash'):
-                    self._log('error', f'the receiver\'s firmware crashed earlier: {health["crash"]}')
+                    self._log('error', f'receiver crashed earlier: {health["crash"]}')
                 if self.error and self.error.startswith('receiver '):
                     self.error = None
                 return
@@ -365,7 +354,7 @@ class ArmControl:
             self.link['why'] = why
             if self.link['misses'] >= LOST_AFTER and self.link['state'] == 'ok':
                 self.link['state'] = 'silent' if why == 'acked but no reply' else 'lost'
-                self._log('error', 'receiver lost: ' + self._link_problem())
+                self._log('error', self._link_problem())
                 if self.armed or self.holds or self.sent:
                     self._stop_locked('receiver lost')
             if why.startswith('transmitter'):
@@ -386,21 +375,20 @@ class ArmControl:
             return
         poor = q['replied_pct'] < POOR_PCT
         if poor and not self.poor:
-            self._log('warn', f"weak radio link: of the last {q['pings']} pings {q['acked_pct']}% were "
-                              f"acknowledged and {q['replied_pct']}% answered. " + PLACEMENT_TIP)
+            self._log('warn', f"weak signal: {q['replied_pct']}% of pings answered. " + PLACEMENT_TIP)
         elif self.poor and q['replied_pct'] >= POOR_PCT + 10:
-            self._log('info', f"radio link good again ({q['replied_pct']}% of the last {q['pings']} pings answered)")
+            self._log('info', 'signal good again')
         self.poor = poor if poor or q['replied_pct'] >= POOR_PCT + 10 else self.poor
 
     def _drop_bridge_locked(self):
         """Forget a failed transmitter (unplugged, or its port died) so the worker reopens it."""
-        self._log('error', 'the transmitter stopped responding on USB (unplugged?); reconnecting')
+        self._log('error', 'transmitter disconnected (USB); reconnecting')
         self.robot = self.bridge = None
         self.armed = False
         self.holds.clear()
         self.sent.clear()
         self.stop_pending = None
-        self.link.update(state='connecting', bridge=False, why='transmitter lost on USB; reconnecting')
+        self.link.update(state='connecting', bridge=False, why='transmitter disconnected (USB); reconnecting')
         reset = getattr(self.connect, 'reset', None)
         if reset:
             try:
@@ -422,16 +410,9 @@ class ArmControl:
     def _link_problem(self):
         state = self.link['state']
         if state == 'silent':
-            return ("the receiver acknowledges the radio (so it is powered and hears the transmitter), but none of its "
-                    f"replies arrived for {self.link['misses']} pings in a row ({self._ago()}). Either its "
-                    "replies are lost on the way back (weak signal: low battery, distance, or the transmitter's "
-                    "position), or its firmware has frozen. Moving is blocked until it replies again. "
-                    + self._quality_text() + PLACEMENT_TIP + " If its uptime restarts when it comes back, "
-                    "it had frozen: switch it off and on.")
+            return 'receiver not replying; moving is blocked until it does'
         if state == 'lost':
-            return (f"no radio acknowledgement from the receiver for {self.link['misses']} pings in a row "
-                    f"({self._ago()}). It is switched off, out of battery, or out of range. "
-                    + self._quality_text())
+            return 'receiver not responding: switched off or out of range'
         if state == 'connecting':
             return self.link['why'] or 'looking for the transmitter and the receiver'
         return None
@@ -518,8 +499,7 @@ def _search_channels(bridge, mac):
                 except Exception:
                     pass
             if ch != here:
-                CHANNEL_NOTES.append(f'the receiver answered on channel {ch}, not {here}: the transmitter moved to '
-                                     f'channel {ch} (save it with tools/deploy.py PORT bridge --channel {ch})')
+                CHANNEL_NOTES.append(f'receiver found on channel {ch} (transmitter was on {here})')
             return {mac: reply}
     try:
         bridge.set_channel(here)   # not found anywhere: back where it began
@@ -540,7 +520,7 @@ def make_connect(port, name, mac):
             try:
                 state['bridge'] = Bridge(port, avoid=[mac or _remembered_mac()])  # never open the arm's own board
             except Exception as error:
-                raise OSError(f'transmitter not found on USB: plug it into the Mac ({error})') from None
+                raise OSError('transmitter not found on USB') from None
         bridge = state['bridge']
         try:
             # a direct ping is retried by the radio, a broadcast scan is not: try the arm we
@@ -558,7 +538,7 @@ def make_connect(port, name, mac):
         except (BridgeError, OSError, ValueError) as error:
             # the USB connection died (unplugged, or the board reset): reopen it next time
             reset()
-            raise OSError(f'transmitter USB error ({error}); reopening it') from None
+            raise OSError('transmitter USB error; reconnecting') from None
         for robot_mac, info in found.items():
             if (mac and robot_mac == mac) or (not mac and info.get('name') == name):
                 if info.get('version') == 'loader':
@@ -567,8 +547,7 @@ def make_connect(port, name, mac):
                 _remember_mac(robot_mac)
                 return bridge, robot, {'mac': robot_mac, 'name': info.get('name'), 'version': info.get('version'),
                                        'channel': info.get('channel')}
-        raise BridgeError(f'the transmitter is connected, but no receiver named {name!r} answered (is the arm switched on? it answers about 5 s after power-up)'
-                          + (f'; saw {sorted(found)}' if found else ''))
+        raise BridgeError('receiver not found: is the arm switched on?')
 
     def reset():
         bridge, state['bridge'] = state['bridge'], None

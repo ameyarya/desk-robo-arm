@@ -44,6 +44,9 @@ class Board:
             self.s.write(b"\x01")  # raw REPL
             try:
                 self._read_until(b"raw REPL; CTRL-B to exit\r\n>", 1.5)
+                # cbb receivers (0.2.4+) arm a 3 s watchdog that keeps running in the REPL and would
+                # reset the board mid-copy; it can't be switched off, so stretch it to an hour
+                self.exec("import machine\ntry:\n machine.WDT(timeout=3600000).feed()\nexcept Exception:\n pass")
                 return
             except TimeoutError:
                 if time.time() > end:

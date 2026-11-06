@@ -31,7 +31,7 @@ def _boot_reasons():
             BOOT_REASONS[getattr(machine, name)] = name.replace("_RESET", "").lower()
 BROADCAST = b"\xff" * 6
 CHANNEL = 1   # default Wi-Fi channel; cbb_config.json "channel" overrides it (both boards must match)
-VERSION = "0.2.4"
+VERSION = "0.2.5"
 
 
 def load_config():
@@ -94,6 +94,31 @@ def radio(channel=CHANNEL):
     return w, e
 
 
+def fit(obj):
+    """obj as JSON in one ESP-NOW packet (250 bytes; a longer send fails, so a reply that grows
+    past it is never seen). Long text fields are cut first, then dropped."""
+    data = ujson.dumps(obj)
+    for key in ("crash", "last_error"):
+        if len(data) <= espnow.MAX_DATA_LEN:
+            break
+        if obj.get(key):
+            obj[key] = obj[key][-(max(0, len(obj[key]) - (len(data) - espnow.MAX_DATA_LEN) - 3)):]
+            data = ujson.dumps(obj)
+        if len(data) > espnow.MAX_DATA_LEN:
+            obj.pop(key, None)
+            data = ujson.dumps(obj)
+    return data
+
+
+def add_peer(e, mac):
+    """Add a radio peer; one that is already known (left over from an earlier run) is fine."""
+    try:
+        e.add_peer(mac)
+    except OSError as ex:
+        if "EXIST" not in str(ex):
+            raise
+
+
 def emit(obj):
     sys.stdout.write("@" + ujson.dumps(obj) + "\n")
 
@@ -104,7 +129,7 @@ def run_bridge(cfg):
     import select
 
     w, e = radio(cfg.get("channel", CHANNEL))
-    e.add_peer(BROADCAST)
+    add_peer(e, BROADCAST)
     peers = set()
     led = StatusLed()
     led.set(0, 0, 12)
@@ -128,7 +153,7 @@ def run_bridge(cfg):
             to = req["to"]
             mac = BROADCAST if to == "*" else unhexmac(to)
             if mac != BROADCAST and mac not in peers:
-                e.add_peer(mac)
+                add_peer(e, mac)
                 peers.add(mac)
             msg = ujson.dumps(req["msg"])
             if len(msg) > espnow.MAX_DATA_LEN:
@@ -284,7 +309,7 @@ def run_receiver(cfg):
     bridge = unhexmac(bridge) if bridge else None
     timeout_ms = cfg.get("failsafe_ms", 600)
     if bridge:
-        e.add_peer(bridge)
+        add_peer(e, bridge)
 
     act = Actuators()
     led = StatusLed()
@@ -311,10 +336,11 @@ def run_receiver(cfg):
                 e.active(False)
                 e.active(True)
                 if bridge:
-                    e.add_peer(bridge)
-            e.send(bridge, ujson.dumps(obj), False)
-        except OSError:
-            pass
+                    add_peer(e, bridge)
+            e.send(bridge, fit(obj), False)
+        except Exception as ex:   # never let a reply break the command that asked for it
+            health["errors"] += 1
+            health["last_error"] = "reply: %r" % ex
 
     def apply(cmd):
         op = cmd.get("op")
@@ -329,13 +355,13 @@ def run_receiver(cfg):
         elif op == "led":
             led.set(*cmd["rgb"])
         elif op in ("hello", "ping"):
-            reply({"op": op, "seq": cmd.get("seq"), "name": name,
-                   "version": VERSION, "moving": len(act.moving), "channel": w.config("channel"),
-                   "up_s": time.ticks_diff(time.ticks_ms(), boot_ms) // 1000,
-                   "errors": health["errors"], "failsafe": health["failsafe"],
-                   "last_error": health["last_error"], "crash": health["crash"],
-                   "mem": gc.mem_free(), "fs_free": fs_free(), "boot": health["boot"],
-                   "loop_max_ms": health["loop_max_ms"], "radio_resets": health["radio_resets"]})
+            info = {"op": op, "name": name, "version": VERSION, "channel": w.config("channel"),
+                    "up_s": time.ticks_diff(time.ticks_ms(), boot_ms) // 1000, "mem": gc.mem_free(),
+                    "boot": health["boot"], "moving": len(act.moving), "seq": cmd.get("seq"),
+                    "errors": health["errors"], "failsafe": health["failsafe"],
+                    "loop_max_ms": health["loop_max_ms"], "radio_resets": health["radio_resets"],
+                    "last_error": health["last_error"], "crash": health["crash"]}
+            reply({k: v for k, v in info.items() if v or k in ("up_s", "channel")})
             health["loop_max_ms"] = 0
             gc.collect()
         elif op == "ka":

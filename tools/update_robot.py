@@ -135,6 +135,8 @@ def main():
     ap.add_argument('--mac', help="the receiver's radio MAC (finds it by direct ping, more reliable than a scan)")
     ap.add_argument('--channel', type=int, help='also move the receiver (and then the transmitter) to this channel')
     ap.add_argument('--wait', type=float, default=600, help='seconds to keep trying through bad radio spells')
+    ap.add_argument('--parts', action='store_true',
+                    help='send the firmware as ~1 KB parts even to 0.2.2+ (when the receiver is short of memory)')
     a = ap.parse_args()
     main_py = os.path.join(FW, 'cbb', 'cbb_main.py')
     src = open(main_py, 'rb').read()
@@ -143,7 +145,17 @@ def main():
     with Bridge(a.port) as b:
         transmitter = b.ping()
         print(f"transmitter {transmitter['mac']} on channel {transmitter.get('channel', '?')}", flush=True)
-        mac, info = wait_for(b, a.name, time.time() + a.wait, a.mac)
+        mac, info = wait_for(b, a.name, time.time() + min(a.wait, 20), a.mac)
+        if not mac and a.mac:
+            # firmware before 0.2.5 stops answering pings once its status no longer fits in one
+            # radio packet (after ~100 s up, or after any error); a restart makes it answer again
+            print('no answer to pings; restarting the receiver', flush=True)
+            try:
+                ota._request(b, a.mac, {'op': 'reset'}, give_up_s=20)
+            except TimeoutError:
+                pass
+            time.sleep(6)
+            mac, info = wait_for(b, a.name, time.time() + a.wait, a.mac)
         if not mac:
             sys.exit(f'receiver {a.name!r} did not answer')
         print('receiver', mac, {k: info.get(k) for k in ('version', 'up_s', 'channel')}, flush=True)
@@ -151,7 +163,7 @@ def main():
             print(f'already on {target}' + (f', channel {a.channel}' if a.channel else ''))
             return
         deadline = a.wait
-        if buffers_in_memory(info.get('version')):
+        if buffers_in_memory(info.get('version')) and not a.parts:
             push_with_patience(b, mac, src, '/cbb/cbb_main.py', deadline, 0.0)
             if a.channel:
                 push_with_patience(b, mac, receiver_config(a.name, transmitter['mac'], a.channel),
@@ -173,7 +185,10 @@ def main():
                 done.add(remote)
                 save_progress(key, done)
                 print(f'  {remote} ({len(data)} bytes) confirmed', flush=True)
-        b.send(mac, {'op': 'reset'})
+        try:   # retried: a single lost packet must not leave the receiver on the old firmware
+            ota._request(b, mac, {'op': 'reset'}, give_up_s=20)
+        except TimeoutError:
+            pass   # it may have restarted before its confirmation got out; the check below tells
         print('receiver restarting on the new firmware', flush=True)
         time.sleep(5)
         if a.channel:

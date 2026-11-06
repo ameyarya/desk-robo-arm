@@ -261,12 +261,10 @@ function show(s){
   showArmed();
   const moving=Object.entries(s.running||{}).filter(([,v])=>v).map(([j,v])=>`${LABEL[j]||j} ${v>0?'+':''}${v}%`);
   if(s.stopping){
-    banner(`Stopping (${s.stopping}): STOP sent ${s.stop_attempts} time${s.stop_attempts===1?'':'s'}, waiting for the receiver to confirm. `+
-      `Whatever happens to the radio, the receiver stops the arm by itself 0.6 s after its last motion command.`);$('banner').className='stopping'}
+    banner('Stopping… waiting for the receiver to confirm.');$('banner').className='stopping'}
   else if(s.problem)banner('Receiver: '+s.problem);
-  else if(L.poor&&L.quality)banner(`Weak radio link: of the last ${L.quality.pings} pings, ${L.quality.acked_pct}% reached the receiver and ${L.quality.replied_pct}% were answered. `+
-    'Moves may stutter or stop. USB 3 ports and hubs, and the Mac itself, jam 2.4 GHz radio: put the transmitter on a USB extension cable, away from the Mac and any USB 3 hub, with a clear line to the arm.',true);
-  else if(L.health&&L.health.crash)banner(`The receiver's firmware crashed before its last restart: ${L.health.crash}`,true);
+  else if(L.poor&&L.quality)banner(`Weak signal (${L.quality.replied_pct}% answered). Move the transmitter away from the Mac.`,true);
+  else if(L.health&&L.health.crash)banner('Receiver crashed earlier (details in the log).',true);
   else banner('');
   if(Date.now()>noteUntil){
     let text,cls='';
@@ -294,8 +292,7 @@ async function lease(){
     else show(await call('GET','/status'))}
   catch(e){if(e.network&&netFails>=2){
       dot('srv-dot','bad');$('srv-txt').textContent='unreachable';dot('bridge-dot','');dot('arm-dot','');
-      banner('Can’t reach the Robo Arm server on this Mac (2 requests in a row failed). It runs as the '+
-        'com.ameyarya.robo-arm login service, which restarts it within seconds; if this stays, check ~/Library/Logs/robo-arm.log.');
+      banner('Can’t reach the server. It restarts by itself; see ~/Library/Logs/robo-arm.log if this stays.');
       linkOk=false;armed=false;mine=false;stopLocal();showArmed();   // the server's lease disarms it too
       $('status').className='status warn';$('status').textContent='No connection to the server: the arm is stopped.'}}
   setTimeout(lease,1000)}

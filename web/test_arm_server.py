@@ -106,7 +106,7 @@ class RunawayTest(unittest.TestCase):
         r.bridge.ack_loss = 0
         r.run(0.3)
         self.assertIsNone(r.control.status()['stopping'])
-        self.assertTrue(any('STOP confirmed by the receiver' in e for e in r.events()))
+        self.assertTrue(any('STOP confirmed' in e for e in r.events()))
 
     def test_old_firmware_that_counts_pings_still_stops(self):
         # firmware before 0.2.2 refreshed its failsafe on any packet, pings included
@@ -139,7 +139,7 @@ class RunawayTest(unittest.TestCase):
         self.assertEqual(s['link']['state'], 'ok')
         self.assertIsNone(s['stopping'])            # a STOP got through after the link came back
         self.assertEqual(r.bridge.arm_moving(), {})
-        self.assertTrue(any('receiver is answering again' in e for e in r.events()))
+        self.assertTrue(any('receiver back' in e for e in r.events()))
 
     def test_lease_lapse_stops_the_arm(self):
         r = Rig().arm()
@@ -180,9 +180,9 @@ class LinkTest(unittest.TestCase):
         s = r.control.status()
         self.assertEqual(s['link']['state'], 'lost')
         self.assertFalse(s['armed'])
-        self.assertIn('no radio acknowledgement from the receiver', s['problem'])
-        self.assertIn('pings in a row', s['problem'])
-        self.assertIn('switched off, out of battery, or out of range', s['problem'])
+        self.assertIn('receiver not responding', s['problem'])
+        self.assertIn('switched off', s['problem'])
+        self.assertIn('out of range', s['problem'])
         with self.assertRaises(Refused) as e:
             r.control.set_armed(True)
         self.assertIn('cannot arm', str(e.exception))
@@ -193,8 +193,8 @@ class LinkTest(unittest.TestCase):
         r.run(arm_server.PING_S * arm_server.LOST_AFTER + 0.1)
         s = r.control.status()
         self.assertEqual(s['link']['state'], 'silent')
-        self.assertIn('acknowledges the radio', s['problem'])
-        self.assertIn('replies are lost on the way back', s['problem'])
+        self.assertIn('receiver not replying', s['problem'])
+        self.assertIn('moving is blocked', s['problem'])
 
     def test_arming_refused_with_the_reason_until_connected(self):
         r = Rig(connect_ok=False)
@@ -267,12 +267,12 @@ class LinkTest(unittest.TestCase):
         s = r.control.status()
         self.assertTrue(s['link']['poor'])
         self.assertLess(s['link']['quality']['replied_pct'], arm_server.POOR_PCT)
-        self.assertTrue(any('weak radio link' in e and 'USB extension' in e for e in r.events()))
-        self.assertIn('acknowledged', s['problem'])  # the lost-link message quotes the numbers
+        self.assertTrue(any('weak signal' in e and 'transmitter away' in e for e in r.events()))
+        self.assertIn('not replying', s['problem'])
         r.bridge.mode = 'cbb'
         r.run(arm_server.PING_S * 30)
         self.assertFalse(r.control.status()['link']['poor'])
-        self.assertTrue(any('radio link good again' in e for e in r.events()))
+        self.assertTrue(any('signal good again' in e for e in r.events()))
 
     def test_receiver_on_another_channel_is_found_and_followed(self):
         class OnChannel(SimBridge):
@@ -295,7 +295,7 @@ class LinkTest(unittest.TestCase):
         found = arm_server._search_channels(b, 'aabbccddeeff')
         self.assertIn('aabbccddeeff', found)
         self.assertEqual(b.channel, 11)
-        self.assertTrue(any('answered on channel 11, not 1' in n for n in arm_server.CHANNEL_NOTES))
+        self.assertTrue(any('found on channel 11 (transmitter was on 1)' in n for n in arm_server.CHANNEL_NOTES))
         b.receiver_channel = 99                      # nowhere: the search gives up, back where it began
         self.assertEqual(arm_server._search_channels(b, 'aabbccddeeff'), {})
         self.assertEqual(b.channel, 11)
@@ -348,7 +348,7 @@ class LinkTest(unittest.TestCase):
         self.assertTrue(any("failsafe stopped the arm" in e for e in r.events()))
         r.bridge.started = r.clock.t                 # uptime goes back to 0: a restart
         r.run(arm_server.PING_S + 0.1)
-        self.assertTrue(any('the receiver restarted' in e for e in r.events()))
+        self.assertTrue(any('receiver restarted' in e for e in r.events()))
 
 
 class MotionTest(unittest.TestCase):
@@ -410,8 +410,8 @@ class MotionTest(unittest.TestCase):
         r.control.stop('STOP pressed')
         r.run(0.3)
         ev = r.events()
-        for expected in ('found the receiver', 'armed by the page', 'elbow starts -30%', 'elbow stopped',
-                         'STOP: STOP pressed', 'STOP confirmed by the receiver'):
+        for expected in ('receiver connected', 'armed by the page', 'elbow starts -30%', 'elbow stopped',
+                         'STOP: STOP pressed', 'STOP confirmed'):
             self.assertTrue(any(expected in e for e in ev), f'{expected!r} not in {ev}')
         self.assertTrue(any('STOP: STOP pressed' in line for line in r.log))   # also in the log file
 
